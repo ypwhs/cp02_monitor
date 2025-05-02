@@ -67,7 +67,6 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
             break;
         
         case HTTP_EVENT_ON_CONNECTED:
-            ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
             // 在连接时重置缓冲区
             if (output_buffer != NULL) {
                 free(output_buffer);
@@ -77,23 +76,12 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
             break;
             
         case HTTP_EVENT_HEADER_SENT:
-            ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
             break;
             
         case HTTP_EVENT_ON_HEADER:
-            ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, %s: %s", evt->header_key, evt->header_value);
-            if (strcmp(evt->header_key, "Content-Length") == 0) {
-                ESP_LOGD(TAG, "Content length: %s", evt->header_value);
-            }
-            if (strcmp(evt->header_key, "Transfer-Encoding") == 0 && 
-                strcmp(evt->header_value, "chunked") == 0) {
-                ESP_LOGD(TAG, "Chunked transfer encoding detected");
-            }
             break;
             
         case HTTP_EVENT_ON_DATA:
-            ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
-            
             // 不管是否是分块传输，都收集数据
             if (evt->data_len > 0) {
                 // 第一次收到数据，需要分配内存
@@ -106,7 +94,6 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
                         return ESP_FAIL;
                     }
                     output_len = 0;
-                    ESP_LOGD(TAG, "Allocated initial buffer of size %d", initial_size);
                 }
                 
                 // 检查是否需要扩展缓冲区
@@ -120,43 +107,26 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
                 // 复制数据到缓冲区
                 memcpy(output_buffer + output_len, evt->data, evt->data_len);
                 output_len += evt->data_len;
-                ESP_LOGD(TAG, "Data received, total length now: %d bytes", output_len);
             }
             break;
             
         case HTTP_EVENT_ON_FINISH:
-            ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
             if (output_buffer != NULL && output_len > 0) {
                 output_buffer[output_len] = '\0';
-                ESP_LOGD(TAG, "Processing data, length: %d bytes", output_len);
-                
-                // 添加调试信息，显示数据的前50个字符
-                if (output_len > 0) {
-                    char preview[51] = {0};
-                    strncpy(preview, output_buffer, output_len > 50 ? 50 : output_len);
-                    ESP_LOGD(TAG, "Data preview: %s", preview);
-                }
-                
-                // 确认数据处理前内容是否正确
-                ESP_LOGD(TAG, "Calling PowerMonitor_ParseData with valid data");
                 PowerMonitor_ParseData(output_buffer);
-                
                 free(output_buffer);
             } else {
-                ESP_LOGW(TAG, "No data received, output_buffer: %p, output_len: %d", 
-                         output_buffer, output_len);
+                ESP_LOGW(TAG, "No data received");
             }
             output_buffer = NULL;
             output_len = 0;
             break;
             
         case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGD(TAG, "HTTP_EVENT_DISCONNECTED");
             if (output_buffer != NULL) {
                 // 如果断开连接时已经收到数据，尝试处理
                 if (output_len > 0) {
                     output_buffer[output_len] = '\0';
-                    ESP_LOGD(TAG, "Processing data from disconnected event, length: %d", output_len);
                     PowerMonitor_ParseData(output_buffer);
                 }
                 free(output_buffer);
@@ -303,12 +273,10 @@ void PowerMonitor_FetchData(void) {
     esp_http_client_set_header(client, "Accept", "text/plain");
     esp_http_client_set_header(client, "User-Agent", "ESP32-HTTP-Client");
     
-    ESP_LOGD(TAG, "Performing HTTP request");
     esp_err_t err = esp_http_client_perform(client);
     
     if (err == ESP_OK) {
         int status_code = esp_http_client_get_status_code(client);
-        ESP_LOGD(TAG, "HTTP GET Status = %d", status_code);
         
         if (status_code == 200) {
             dataError = false;  // 重置数据错误标志
@@ -353,8 +321,6 @@ void PowerMonitor_ParseData(char* payload) {
         return;
     }
     
-    ESP_LOGD(TAG, "Parsing power data");
-    
     // 重置总功率
     totalPower = 0.0f;
     
@@ -389,7 +355,6 @@ void PowerMonitor_ParseData(char* payload) {
             // 更新端口电流
             if (portId >= 0 && portId < MAX_PORTS) {
                 portInfos[portId].current = current;
-                ESP_LOGD(TAG, "Parsed port %d current: %d mA", portId, current);
             }
         }
         // 解析电压数据
@@ -417,7 +382,6 @@ void PowerMonitor_ParseData(char* payload) {
             // 更新端口电压
             if (portId >= 0 && portId < MAX_PORTS) {
                 portInfos[portId].voltage = voltage;
-                ESP_LOGD(TAG, "Parsed port %d voltage: %d mV", portId, voltage);
             }
         }
         // 解析状态数据
