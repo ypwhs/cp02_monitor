@@ -9,18 +9,15 @@
 #include <stdio.h>
 #include <string.h>  // For memcpy
 #include "esp_system.h"
-#include "esp_bt.h"
-#include "esp_gap_ble_api.h"
-#include "esp_bt_main.h"
+#include "esp_netif.h"
 
-
-
-extern uint16_t BLE_NUM;
 extern uint16_t WIFI_NUM;
-extern bool Scan_finish;
+extern bool WIFI_Connection;  // WiFi连接状态
+extern int8_t WiFi_RSSI;      // WiFi信号强度
 
 void Wireless_Init(void);
 void WIFI_Init(void *arg);
 uint16_t WIFI_Scan(void);
-void BLE_Init(void *arg);
-uint16_t BLE_Scan(void);
+
+// WiFi连接功能
+void WiFi_Connect(const char* ssid, const char* password);
