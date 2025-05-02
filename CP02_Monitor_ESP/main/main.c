@@ -8,6 +8,9 @@
 #include "Wireless.h"
 #include "LVGL_Driver.h"
 #include "Power_Monitor.h"
+#include "esp_log.h"
+
+static const char *TAG = "CP02_MAIN";
 
 // WiFi配置
 const char* WIFI_SSID = "Apple";          // 填写你的WiFi名称
@@ -21,19 +24,26 @@ const int REFRESH_INTERVAL = 500;   // 刷新间隔 (ms)
 
 void app_main(void)
 {
+    ESP_LOGI(TAG, "CP02 Monitor application starting...");
+    
     // 连接WiFi - 此函数内部会确保WiFi初始化
+    ESP_LOGI(TAG, "Connecting to WiFi...");
     WiFi_Connect(WIFI_SSID, WIFI_PASSWORD);
     
     // 初始化LCD显示器
+    ESP_LOGI(TAG, "Initializing LCD display");
     LCD_Init();
     BK_Light(90);  // 设置背光亮度
     
     // 初始化LVGL
+    ESP_LOGI(TAG, "Initializing LVGL");
     LVGL_Init();
     
     // 初始化功率监控
+    ESP_LOGI(TAG, "Initializing Power Monitor");
     PowerMonitor_Init();
 
+    ESP_LOGI(TAG, "Initialization complete");
     // 主循环
     while (1) {
         // LVGL定时器处理函数，需要定期调用

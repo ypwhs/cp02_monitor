@@ -1,5 +1,7 @@
 #include "RGB.h"
+#include "esp_log.h"
 
+static const char *TAG = "RGB_LAMP";
 static uint8_t RGB_Data[192][3] ={
     {64, 1, 0}, {63, 2, 0}, {62, 3, 0}, {61, 4, 0}, {60, 5, 0}, {59, 6, 0}, {58, 7, 0}, {57, 8, 0},
     {56, 9, 0}, {55, 10, 0}, {54, 11, 0}, {53, 12, 0}, {52, 13, 0}, {51, 14, 0}, {50, 15, 0}, {49, 16, 0},
@@ -34,6 +36,7 @@ static led_strip_handle_t led_strip;
 
 void RGB_Init(void)
 {
+    ESP_LOGI(TAG, "Initializing RGB LED strip");
     /* LED strip initialization with the GPIO and pixels number*/
     led_strip_config_t strip_config = {
         .strip_gpio_num = BLINK_GPIO,
@@ -44,12 +47,16 @@ void RGB_Init(void)
         .flags.with_dma = false,
     };
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
+    ESP_LOGI(TAG, "RGB LED strip initialized on GPIO %d", BLINK_GPIO);
 
     /* Set all LED off to clear all pixels */
     led_strip_clear(led_strip);
+    ESP_LOGI(TAG, "RGB LED strip cleared");
 }
+
 void Set_RGB( uint8_t red_val, uint8_t green_val, uint8_t blue_val)
 {
+    ESP_LOGD(TAG, "Setting RGB values: R=%d, G=%d, B=%d", red_val, green_val, blue_val);
     /* Set the LED pixel using RGB from 0 (0%) to 255 (100%) for each color */
     led_strip_set_pixel(led_strip, 0, red_val, green_val, blue_val);
     /* Refresh the strip to send data */
@@ -58,17 +65,24 @@ void Set_RGB( uint8_t red_val, uint8_t green_val, uint8_t blue_val)
 
 void _RGB_Example(void *arg)
 {
+    ESP_LOGI(TAG, "RGB example demo task started");
     static uint8_t i = 0;
     while(1)
     {
+        ESP_LOGD(TAG, "RGB cycle index: %d", i);
         Set_RGB(RGB_Data[i][0]*3,RGB_Data[i][1]*3,RGB_Data[i][2]*3);
         i++;
-        if(i >= 192) i = 0;
+        if(i >= 192) {
+            i = 0;
+            ESP_LOGI(TAG, "RGB cycle completed, restarting");
+        }
         vTaskDelay(20 / portTICK_PERIOD_MS);
     }
 }
+
 void RGB_Example(void)
 {
+    ESP_LOGI(TAG, "Starting RGB example demo task");
     // RGB
     xTaskCreatePinnedToCore(
         _RGB_Example, 
@@ -78,4 +92,5 @@ void RGB_Example(void)
         4, 
         NULL, 
         0);
+    ESP_LOGI(TAG, "RGB example demo task created successfully");
 }

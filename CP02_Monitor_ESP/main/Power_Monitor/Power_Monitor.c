@@ -82,6 +82,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
             break;
             
         case HTTP_EVENT_DISCONNECTED:
+            ESP_LOGW(TAG, "HTTP_EVENT_DISCONNECTED");
             if (output_buffer != NULL) {
                 free(output_buffer);
                 output_buffer = NULL;
@@ -97,6 +98,8 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 
 // 初始化电源监控
 void PowerMonitor_Init(void) {
+    ESP_LOGI(TAG, "Initializing Power Monitor...");
+    
     // 初始化端口信息
     for (int i = 0; i < MAX_PORTS; i++) {
         portInfos[i].id = i;
@@ -120,10 +123,14 @@ void PowerMonitor_Init(void) {
     // 创建定时器
     refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
     wifi_timer = lv_timer_create(wifi_status_timer_cb, 1000, NULL);
+    
+    ESP_LOGI(TAG, "Power Monitor initialized, refresh interval: %d ms", REFRESH_INTERVAL);
 }
 
 // 创建电源显示UI
 void PowerMonitor_CreateUI(void) {
+    ESP_LOGI(TAG, "Creating Power Monitor UI");
+    
     // 创建屏幕
     ui_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(ui_screen, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -222,12 +229,17 @@ void PowerMonitor_FetchData(void) {
 
 // 解析数据
 void PowerMonitor_ParseData(char* payload) {
+    ESP_LOGI(TAG, "Parsing power data");
+    
     // 重置总功率
     totalPower = 0.0f;
     
     // 逐行解析数据
     char* line = strtok(payload, "\n");
+    int lineCount = 0;
     while (line != NULL) {
+        lineCount++;
+        
         // 解析电流数据
         if (strncmp(line, "ionbridge_port_current{id=", 26) == 0) {
             // 提取端口ID
@@ -307,6 +319,8 @@ void PowerMonitor_ParseData(char* payload) {
         totalPower += portInfos[i].power;
     }
     
+    ESP_LOGI(TAG, "Total power: %.2fW", totalPower);
+    
     // 更新UI
     PowerMonitor_UpdateUI();
 }
@@ -370,6 +384,7 @@ void PowerMonitor_UpdateWiFiStatus(void) {
             lv_obj_t * label = ui_wifi_status;
             lv_label_set_recolor(label, true);
             lv_label_set_text(label, "WiFi: #FF0000 DATA ERROR#");
+            ESP_LOGW(TAG, "WiFi connected but data error occurred");
         } else {
             // WiFi已连接且数据正常
             lv_label_set_text(ui_wifi_status, "WiFi");
@@ -379,6 +394,7 @@ void PowerMonitor_UpdateWiFiStatus(void) {
         // WiFi断开连接
         lv_label_set_text(ui_wifi_status, "WiFi");
         lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFF0000), LV_PART_MAIN | LV_STATE_DEFAULT);
+        ESP_LOGW(TAG, "WiFi disconnected");
     }
 }
 
