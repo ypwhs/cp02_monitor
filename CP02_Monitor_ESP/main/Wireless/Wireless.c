@@ -3,9 +3,39 @@
 uint16_t WIFI_NUM = 0;
 bool WIFI_Connection = false;  // WiFi连接状态
 int8_t WiFi_RSSI = 0;          // WiFi信号强度
+bool WIFI_GotIP = false;
 
 bool WiFi_Scan_Finish = 0;
 static bool wifi_initialized = false;  // WiFi初始化标志
+
+// WiFi事件处理函数
+static void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                              int32_t event_id, void *event_data)
+{
+    if (event_base == WIFI_EVENT) {
+        if (event_id == WIFI_EVENT_STA_START) {
+            ESP_LOGI("WIFI", "WiFi模式已启动");
+        } else if (event_id == WIFI_EVENT_STA_CONNECTED) {
+            ESP_LOGI("WIFI", "WiFi已连接AP");
+            WIFI_Connection = true;
+            // 连接到AP后，IP状态仍为false，等待IP_EVENT
+        } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            ESP_LOGI("WIFI", "WiFi连接断开，尝试重连...");
+            WIFI_Connection = false;
+            WIFI_GotIP = false; // 断开连接时重置IP状态
+            esp_wifi_connect(); // 断开时自动重连
+        }
+    } else if (event_base == IP_EVENT) {
+        if (event_id == IP_EVENT_STA_GOT_IP) {
+            ip_event_got_ip_t *event = (ip_event_got_ip_t*)event_data;
+            ESP_LOGI("WIFI", "获取IP地址: " IPSTR, IP2STR(&event->ip_info.ip));
+            WIFI_GotIP = true; // 设置IP获取状态为true
+        } else if (event_id == IP_EVENT_STA_LOST_IP) {
+            ESP_LOGI("WIFI", "IP地址失效");
+            WIFI_GotIP = false; // IP丢失时重置状态
+        }
+    }
+}
 
 // 初始化WiFi函数（同步版本）
 static void Initialize_WiFi(void) {
@@ -22,9 +52,18 @@ static void Initialize_WiFi(void) {
         ESP_LOGI("WIFI", "开始初始化WiFi");
         esp_netif_init();
         esp_event_loop_create_default();
-        esp_netif_create_default_wifi_sta();
+        esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+        
+        // 确保netif创建成功
+        assert(sta_netif != NULL);
+        
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
         ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+        
+        // 注册WiFi事件处理函数
+        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+        ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+        
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_start());
         
@@ -80,6 +119,10 @@ void WiFi_Connect(const char* ssid, const char* password) {
     // 确保WiFi已初始化
     Initialize_WiFi();
     
+    // 初始化状态变量
+    WIFI_Connection = false;
+    WIFI_GotIP = false;
+    
     // 配置WiFi
     wifi_config_t wifi_config = {0};
     
@@ -93,20 +136,7 @@ void WiFi_Connect(const char* ssid, const char* password) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_connect());
     
-    // 检查连接状态
-    wifi_ap_record_t ap_info;
-    for (int i = 0; i < 20; i++) {
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        esp_err_t err = esp_wifi_sta_get_ap_info(&ap_info);
-        if (err == ESP_OK) {
-            WIFI_Connection = true;
-            WiFi_RSSI = ap_info.rssi;
-            ESP_LOGI("WIFI", "WiFi已连接, RSSI: %d", WiFi_RSSI);
-            break;
-        }
-    }
-    
-    if (!WIFI_Connection) {
-        ESP_LOGE("WIFI", "WiFi连接失败");
-    }
+    // 不再在这里等待和检查WiFi连接，从而减少阻塞
+    // 连接状态将由事件处理函数更新
+    ESP_LOGI("WIFI", "WiFi连接中...");
 }

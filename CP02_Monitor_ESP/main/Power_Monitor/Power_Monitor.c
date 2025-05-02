@@ -29,6 +29,7 @@ PortInfo portInfos[MAX_PORTS];
 float totalPower = 0.0f;
 bool dataError = false;  // 数据错误标志
 extern bool WIFI_Connection;
+extern bool WIFI_GotIP;
 
 // UI组件
 static lv_obj_t *ui_screen;
@@ -41,17 +42,47 @@ static lv_obj_t *ui_total_bar;
 static lv_obj_t *ui_wifi_status;
 static lv_timer_t *refresh_timer = NULL;
 static lv_timer_t *wifi_timer = NULL;
+static lv_timer_t *startup_anim_timer = NULL;
+static uint8_t startup_anim_progress = 0;
 
 // 定义WiFi状态更新的计时器回调函数
 static void wifi_status_timer_cb(lv_timer_t *timer) {
     PowerMonitor_UpdateWiFiStatus();
     
-    // 如果WiFi连接成功且刷新定时器还未创建，则创建刷新定时器
-    if (WIFI_Connection && refresh_timer == NULL) {
-        ESP_LOGI(TAG, "WiFi connected, starting power monitoring");
+    // 如果WiFi连接成功且已获取IP地址，并且刷新定时器还未创建，则创建刷新定时器
+    if (WIFI_Connection && WIFI_GotIP && refresh_timer == NULL) {
+        ESP_LOGI(TAG, "WiFi connected and IP obtained, starting power monitoring");
         ESP_LOGI(TAG, "Monitoring data from URL: %s", DATA_URL);
         refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
         ESP_LOGI(TAG, "Refresh timer created with interval: %d ms", REFRESH_INTERVAL);
+    }
+}
+
+// 启动动画回调函数
+static void startup_animation_cb(lv_timer_t *timer) {
+    // 更新进度值
+    startup_anim_progress += 5;
+    
+    // 为所有进度条设置进度
+    for (int i = 0; i < MAX_PORTS; i++) {
+        lv_bar_set_value(ui_power_bars[i], startup_anim_progress, LV_ANIM_OFF);
+    }
+    
+    // 设置总功率进度条进度
+    lv_bar_set_value(ui_total_bar, startup_anim_progress, LV_ANIM_OFF);
+    
+    // 当达到100%时停止动画
+    if (startup_anim_progress >= 100) {
+        lv_timer_del(startup_anim_timer);
+        startup_anim_timer = NULL;
+        
+        // 重置所有进度条为0
+        for (int i = 0; i < MAX_PORTS; i++) {
+            lv_bar_set_value(ui_power_bars[i], 0, LV_ANIM_OFF);
+        }
+        lv_bar_set_value(ui_total_bar, 0, LV_ANIM_OFF);
+        
+        ESP_LOGI(TAG, "Startup animation completed");
     }
 }
 
@@ -146,6 +177,9 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 void PowerMonitor_Init(void) {
     ESP_LOGI(TAG, "Initializing Power Monitor...");
     
+    // 初始化WiFi状态
+    WIFI_GotIP = false;
+    
     // 初始化端口信息
     for (int i = 0; i < MAX_PORTS; i++) {
         portInfos[i].id = i;
@@ -165,6 +199,10 @@ void PowerMonitor_Init(void) {
     
     // 创建UI
     PowerMonitor_CreateUI();
+    
+    // 启动动画：创建一个50ms的定时器，每次增加5%，总共20步，约1秒完成
+    startup_anim_progress = 0;
+    startup_anim_timer = lv_timer_create(startup_animation_cb, 50, NULL);
     
     // 创建WiFi状态监控定时器 - 它会在WiFi连接后启动数据刷新定时器
     wifi_timer = lv_timer_create(wifi_status_timer_cb, 1000, NULL);
@@ -211,14 +249,24 @@ void PowerMonitor_CreateUI(void) {
         lv_obj_set_style_text_color(ui_power_values[i], lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_align(ui_power_values[i], LV_ALIGN_TOP_LEFT, 45, start_y + i * item_height);
         
-        // 功率进度条
+        // 功率进度条 - 带渐变色
         ui_power_bars[i] = lv_bar_create(ui_screen);
         lv_obj_set_size(ui_power_bars[i], 200, 15);
         lv_obj_align(ui_power_bars[i], LV_ALIGN_TOP_RIGHT, -10, start_y + i * item_height);
         lv_bar_set_range(ui_power_bars[i], 0, 100);
         lv_bar_set_value(ui_power_bars[i], 0, LV_ANIM_OFF);
+        
+        // 设置不同区间的颜色
         lv_obj_set_style_bg_color(ui_power_bars[i], lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_bg_color(ui_power_bars[i], lv_color_hex(0x00FF00), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+        
+        // 设置进度条指示器颜色为绿黄色
+        lv_obj_set_style_bg_color(ui_power_bars[i], lv_color_hex(0x88FF00), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+        
+        // 启用水平渐变
+        lv_obj_set_style_bg_grad_dir(ui_power_bars[i], LV_GRAD_DIR_HOR, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+        
+        // 设置渐变终止颜色为红黄色
+        lv_obj_set_style_bg_grad_color(ui_power_bars[i], lv_color_hex(0xFF8800), LV_PART_INDICATOR | LV_STATE_DEFAULT);
     }
     
     // 总功率标签
@@ -228,14 +276,24 @@ void PowerMonitor_CreateUI(void) {
     lv_obj_set_style_text_font(ui_total_label, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(ui_total_label, LV_ALIGN_TOP_LEFT, 10, start_y + MAX_PORTS * item_height + 5);
     
-    // 总功率进度条
+    // 总功率进度条 - 带渐变色
     ui_total_bar = lv_bar_create(ui_screen);
     lv_obj_set_size(ui_total_bar, 200, 15);
     lv_obj_align(ui_total_bar, LV_ALIGN_TOP_RIGHT, -10, start_y + MAX_PORTS * item_height + 5);
     lv_bar_set_range(ui_total_bar, 0, 100);
     lv_bar_set_value(ui_total_bar, 0, LV_ANIM_OFF);
+    
+    // 设置总功率进度条背景色
     lv_obj_set_style_bg_color(ui_total_bar, lv_color_hex(0x444444), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(ui_total_bar, lv_color_hex(0x0088FF), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    
+    // 设置进度条指示器颜色为绿黄色
+    lv_obj_set_style_bg_color(ui_total_bar, lv_color_hex(0x88FF00), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    
+    // 启用水平渐变
+    lv_obj_set_style_bg_grad_dir(ui_total_bar, LV_GRAD_DIR_HOR, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    
+    // 设置渐变终止颜色为红黄色
+    lv_obj_set_style_bg_grad_color(ui_total_bar, lv_color_hex(0xFF8800), LV_PART_INDICATOR | LV_STATE_DEFAULT);
     
     // 加载屏幕
     lv_scr_load(ui_screen);
@@ -246,33 +304,50 @@ void PowerMonitor_CreateUI(void) {
 
 // 从网络获取数据
 void PowerMonitor_FetchData(void) {
-    // 如果WiFi未连接，则不尝试获取数据
-    if (!WIFI_Connection) {
-        ESP_LOGW(TAG, "WiFi not connected, skipping data fetch");
+    static esp_http_client_handle_t client = NULL;
+    static uint32_t last_request_time = 0;
+    uint32_t current_time = esp_log_timestamp();
+    
+    // 限制请求频率，确保上一次请求完成
+    if (current_time - last_request_time < 300) {
+        return; // 限制请求频率，防止过于频繁
+    }
+    
+    // 如果WiFi未连接或未获取IP地址，则不尝试获取数据
+    if (!WIFI_Connection || !WIFI_GotIP) {
+        ESP_LOGW(TAG, "WiFi not connected or IP not obtained, skipping data fetch");
         return;
     }
     
-    // 创建HTTP客户端配置
-    esp_http_client_config_t config = {
-        .url = DATA_URL,
-        .event_handler = http_event_handler,
-        .timeout_ms = 3000,
-        .buffer_size = 4096,
-        .disable_auto_redirect = true, // 禁用自动重定向
-        .skip_cert_common_name_check = true, // 跳过证书检查
-    };
-    
-    esp_http_client_handle_t client = esp_http_client_init(&config);
+    // 每次调用时检查客户端是否已初始化
     if (client == NULL) {
-        ESP_LOGE(TAG, "Failed to initialize HTTP client");
-        return;
+        // 创建HTTP客户端配置
+        esp_http_client_config_t config = {
+            .url = DATA_URL,
+            .event_handler = http_event_handler,
+            .timeout_ms = 1000,  // 减少超时时间
+            .buffer_size = 4096,
+            .disable_auto_redirect = true, // 禁用自动重定向
+            .skip_cert_common_name_check = true, // 跳过证书检查
+        };
+        
+        client = esp_http_client_init(&config);
+        if (client == NULL) {
+            ESP_LOGE(TAG, "Failed to initialize HTTP client");
+            return;
+        }
+        
+        // 设置请求头
+        esp_http_client_set_method(client, HTTP_METHOD_GET);
+        esp_http_client_set_header(client, "Accept", "text/plain");
+        esp_http_client_set_header(client, "User-Agent", "ESP32-HTTP-Client");
     }
     
-    // 设置请求头
-    esp_http_client_set_method(client, HTTP_METHOD_GET);
-    esp_http_client_set_header(client, "Accept", "text/plain");
-    esp_http_client_set_header(client, "User-Agent", "ESP32-HTTP-Client");
+    // 记录请求开始时间
+    last_request_time = current_time;
     
+    // 执行非阻塞HTTP请求
+    // 注意：在实际实现中，这可能需要单独的任务或非阻塞API
     esp_err_t err = esp_http_client_perform(client);
     
     if (err == ESP_OK) {
@@ -288,29 +363,22 @@ void PowerMonitor_FetchData(void) {
         dataError = true;   // 设置数据错误标志
         ESP_LOGE(TAG, "HTTP GET request failed: %s (error code: %d)", esp_err_to_name(err), err);
         
-        // 添加更详细的错误诊断
-        if (err == ESP_ERR_HTTP_CONNECT) {
-            ESP_LOGE(TAG, "连接失败 - 请检查服务器地址是否正确或服务器是否运行");
-        } else if (err == ESP_ERR_HTTP_CONNECTING) {
-            ESP_LOGE(TAG, "连接超时 - 请检查网络连接和服务器状态");
-        } else if (err == ESP_ERR_HTTP_FETCH_HEADER) {
-            ESP_LOGE(TAG, "获取响应头失败 - 服务器可能未正确响应");
-        } else if (err == ESP_ERR_HTTP_INVALID_TRANSPORT) {
-            ESP_LOGE(TAG, "传输层错误");
-        } else if (err == ESP_ERR_HTTP_MAX_REDIRECT) {
-            ESP_LOGE(TAG, "重定向次数超过限制");
-        } else if (err == ESP_ERR_HTTP_WRITE_DATA) {
-            ESP_LOGE(TAG, "写入请求数据失败");
-        } else if (err == ESP_ERR_HTTP_INVALID_TRANSPORT) {
-            ESP_LOGE(TAG, "无效的传输");
+        // 如果是超时错误，清理并重新初始化客户端
+        if (err == ESP_ERR_HTTP_FETCH_HEADER || err == ESP_ERR_HTTP_CONNECTING) {
+            ESP_LOGI(TAG, "重置HTTP客户端连接");
+            esp_http_client_cleanup(client);
+            client = NULL;
         }
     }
     
-    // 确保不管发生什么都清理客户端
-    esp_http_client_cleanup(client);
+    // 不在每次请求后都清理客户端，仅在需要重置时清理
+    // 这减少了频繁初始化的开销
     
     // 更新WiFi状态以反映数据错误
     PowerMonitor_UpdateWiFiStatus();
+    
+    // 让出CPU时间
+    vTaskDelay(1);
 }
 
 // 解析数据
@@ -438,20 +506,6 @@ void PowerMonitor_ParseData(char* payload) {
              portInfos[4].power, portInfos[4].current, portInfos[4].voltage,
              totalPower);
     
-    // 检查是否有有效数据需要更新UI
-    bool hasValidData = false;
-    for (int i = 0; i < MAX_PORTS; i++) {
-        if (portInfos[i].current > 0 || portInfos[i].voltage > 0) {
-            hasValidData = true;
-            break;
-        }
-    }
-    
-    if (!hasValidData) {
-        ESP_LOGW(TAG, "No valid power data found, skipping UI update");
-        return;
-    }
-    
     // 更新UI
     PowerMonitor_UpdateUI();
 }
@@ -464,23 +518,14 @@ void PowerMonitor_UpdateUI(void) {
         int power_int = (int)(portInfos[i].power * 100);
         lv_label_set_text_fmt(ui_power_values[i], "%d.%02dW", power_int / 100, power_int % 100);
         
-        // 设置进度条颜色（基于功率值）
-        uint32_t color;
-        if (portInfos[i].power <= 15.0f) {
-            color = 0x00FF00; // 绿色
-        } else if (portInfos[i].power <= 30.0f) {
-            color = 0xFFFF00; // 黄色
-        } else {
-            color = 0xFF0000; // 红色
-        }
-        lv_obj_set_style_bg_color(ui_power_bars[i], lv_color_hex(color), LV_PART_INDICATOR | LV_STATE_DEFAULT);
-        
         // 更新进度条值（最大功率的百分比）
         int percent = (int)((portInfos[i].power / MAX_PORT_WATTS) * 100);
         // 确保非零功率至少显示一些进度
         if (portInfos[i].power > 0 && percent == 0) {
             percent = 1;
         }
+        
+        // 使用简单方式设置值，避免动画引起的问题
         lv_bar_set_value(ui_power_bars[i], percent, LV_ANIM_OFF);
     }
     
@@ -494,18 +539,9 @@ void PowerMonitor_UpdateUI(void) {
     if (totalPower > 0 && totalPercent == 0) {
         totalPercent = 1;
     }
-    lv_bar_set_value(ui_total_bar, totalPercent, LV_ANIM_OFF);
     
-    // 设置总功率进度条颜色
-    uint32_t totalColor;
-    if (totalPower <= 60.0f) {
-        totalColor = 0x0088FF; // 蓝色
-    } else if (totalPower <= 100.0f) {
-        totalColor = 0xFFAA00; // 橙色
-    } else {
-        totalColor = 0xFF0000; // 红色
-    }
-    lv_obj_set_style_bg_color(ui_total_bar, lv_color_hex(totalColor), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    // 使用简单方式设置值，避免动画引起的问题
+    lv_bar_set_value(ui_total_bar, totalPercent, LV_ANIM_OFF);
     
     // 强制LVGL立即更新UI
     lv_refr_now(NULL);
@@ -514,7 +550,7 @@ void PowerMonitor_UpdateUI(void) {
 // 更新UI上的WiFi状态
 void PowerMonitor_UpdateWiFiStatus(void) {
     // 更新WiFi连接状态
-    if (WIFI_Connection) {
+    if (WIFI_Connection && WIFI_GotIP) {
         if (dataError) {
             // WiFi已连接但数据错误
             lv_obj_t * label = ui_wifi_status;
@@ -526,6 +562,11 @@ void PowerMonitor_UpdateWiFiStatus(void) {
             lv_label_set_text(ui_wifi_status, "WiFi");
             lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0x00FF00), LV_PART_MAIN | LV_STATE_DEFAULT);
         }
+    } else if (WIFI_Connection && !WIFI_GotIP) {
+        // WiFi已连接但未获取IP
+        lv_label_set_text(ui_wifi_status, "WiFi: Getting IP");
+        lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFFFF00), LV_PART_MAIN | LV_STATE_DEFAULT);
+        ESP_LOGW(TAG, "WiFi connected but IP not obtained");
     } else {
         // WiFi断开连接
         lv_label_set_text(ui_wifi_status, "WiFi");
@@ -536,5 +577,11 @@ void PowerMonitor_UpdateWiFiStatus(void) {
 
 // 定时器回调
 void PowerMonitor_TimerCallback(lv_timer_t *timer) {
-    PowerMonitor_FetchData();
+    // 将此操作交给LVGL定时器，减少直接阻塞
+    static uint8_t counter = 0;
+    
+    // 每两次调用才请求一次数据，减少请求频率
+    if (counter++ % 2 == 0) {
+        PowerMonitor_FetchData();
+    }
 } 
