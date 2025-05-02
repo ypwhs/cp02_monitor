@@ -24,8 +24,6 @@ extern const int MAX_PORT_WATTS;     // 每个端口最大功率
 extern const char* DATA_URL;         // API URL
 extern const int REFRESH_INTERVAL;   // 刷新间隔 (ms)
 
-#define LV_SPRINTF_CUSTOM 1
-
 // 全局变量
 PortInfo portInfos[MAX_PORTS];
 float totalPower = 0.0f;
@@ -47,50 +45,128 @@ static lv_timer_t *wifi_timer = NULL;
 // 定义WiFi状态更新的计时器回调函数
 static void wifi_status_timer_cb(lv_timer_t *timer) {
     PowerMonitor_UpdateWiFiStatus();
+    
+    // 如果WiFi连接成功且刷新定时器还未创建，则创建刷新定时器
+    if (WIFI_Connection && refresh_timer == NULL) {
+        ESP_LOGI(TAG, "WiFi connected, starting power monitoring");
+        ESP_LOGI(TAG, "Monitoring data from URL: %s", DATA_URL);
+        refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
+        ESP_LOGI(TAG, "Refresh timer created with interval: %d ms", REFRESH_INTERVAL);
+    }
 }
 
 // ESP-IDF HTTP客户端事件处理
 static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 {
     static char *output_buffer;
-    static int output_len;
+    static int  output_len;
     
     switch(evt->event_id) {
+        case HTTP_EVENT_ERROR:
+            ESP_LOGE(TAG, "HTTP_EVENT_ERROR");
+            break;
+        
+        case HTTP_EVENT_ON_CONNECTED:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
+            // 在连接时重置缓冲区
+            if (output_buffer != NULL) {
+                free(output_buffer);
+            }
+            output_buffer = NULL;
+            output_len = 0;
+            break;
+            
+        case HTTP_EVENT_HEADER_SENT:
+            ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
+            break;
+            
+        case HTTP_EVENT_ON_HEADER:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, %s: %s", evt->header_key, evt->header_value);
+            if (strcmp(evt->header_key, "Content-Length") == 0) {
+                ESP_LOGD(TAG, "Content length: %s", evt->header_value);
+            }
+            if (strcmp(evt->header_key, "Transfer-Encoding") == 0 && 
+                strcmp(evt->header_value, "chunked") == 0) {
+                ESP_LOGD(TAG, "Chunked transfer encoding detected");
+            }
+            break;
+            
         case HTTP_EVENT_ON_DATA:
-            if (!esp_http_client_is_chunked_response(evt->client)) {
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
+            
+            // 不管是否是分块传输，都收集数据
+            if (evt->data_len > 0) {
+                // 第一次收到数据，需要分配内存
                 if (output_buffer == NULL) {
-                    output_buffer = (char *) malloc(esp_http_client_get_content_length(evt->client) + 1);
-                    output_len = 0;
+                    // 初始分配8KB缓冲区，足够大多数请求
+                    int initial_size = 8192;
+                    output_buffer = (char *)malloc(initial_size);
                     if (output_buffer == NULL) {
                         ESP_LOGE(TAG, "Failed to allocate memory for output buffer");
                         return ESP_FAIL;
                     }
+                    output_len = 0;
+                    ESP_LOGD(TAG, "Allocated initial buffer of size %d", initial_size);
                 }
+                
+                // 检查是否需要扩展缓冲区
+                size_t new_size = output_len + evt->data_len + 1; // +1 for null terminator
+                output_buffer = (char *)realloc(output_buffer, new_size);
+                if (output_buffer == NULL) {
+                    ESP_LOGE(TAG, "Failed to reallocate memory for output buffer");
+                    return ESP_FAIL;
+                }
+                
+                // 复制数据到缓冲区
                 memcpy(output_buffer + output_len, evt->data, evt->data_len);
                 output_len += evt->data_len;
+                ESP_LOGD(TAG, "Data received, total length now: %d bytes", output_len);
             }
             break;
             
         case HTTP_EVENT_ON_FINISH:
-            if (output_buffer != NULL) {
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
+            if (output_buffer != NULL && output_len > 0) {
                 output_buffer[output_len] = '\0';
+                ESP_LOGD(TAG, "Processing data, length: %d bytes", output_len);
+                
+                // 添加调试信息，显示数据的前50个字符
+                if (output_len > 0) {
+                    char preview[51] = {0};
+                    strncpy(preview, output_buffer, output_len > 50 ? 50 : output_len);
+                    ESP_LOGD(TAG, "Data preview: %s", preview);
+                }
+                
+                // 确认数据处理前内容是否正确
+                ESP_LOGD(TAG, "Calling PowerMonitor_ParseData with valid data");
                 PowerMonitor_ParseData(output_buffer);
+                
                 free(output_buffer);
-                output_buffer = NULL;
-                output_len = 0;
+            } else {
+                ESP_LOGW(TAG, "No data received, output_buffer: %p, output_len: %d", 
+                         output_buffer, output_len);
             }
+            output_buffer = NULL;
+            output_len = 0;
             break;
             
         case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGW(TAG, "HTTP_EVENT_DISCONNECTED");
+            ESP_LOGD(TAG, "HTTP_EVENT_DISCONNECTED");
             if (output_buffer != NULL) {
+                // 如果断开连接时已经收到数据，尝试处理
+                if (output_len > 0) {
+                    output_buffer[output_len] = '\0';
+                    ESP_LOGD(TAG, "Processing data from disconnected event, length: %d", output_len);
+                    PowerMonitor_ParseData(output_buffer);
+                }
                 free(output_buffer);
                 output_buffer = NULL;
-                output_len = 0;
             }
+            output_len = 0;
             break;
             
         default:
+            ESP_LOGW(TAG, "Unknown HTTP event: %d", evt->event_id);
             break;
     }
     return ESP_OK;
@@ -120,11 +196,10 @@ void PowerMonitor_Init(void) {
     // 创建UI
     PowerMonitor_CreateUI();
     
-    // 创建定时器
-    refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
+    // 创建WiFi状态监控定时器 - 它会在WiFi连接后启动数据刷新定时器
     wifi_timer = lv_timer_create(wifi_status_timer_cb, 1000, NULL);
     
-    ESP_LOGI(TAG, "Power Monitor initialized, refresh interval: %d ms", REFRESH_INTERVAL);
+    ESP_LOGI(TAG, "Power Monitor initialized, waiting for WiFi connection");
 }
 
 // 创建电源显示UI
@@ -201,26 +276,69 @@ void PowerMonitor_CreateUI(void) {
 
 // 从网络获取数据
 void PowerMonitor_FetchData(void) {
+    // 如果WiFi未连接，则不尝试获取数据
+    if (!WIFI_Connection) {
+        ESP_LOGW(TAG, "WiFi not connected, skipping data fetch");
+        return;
+    }
+    
+    // 创建HTTP客户端配置
     esp_http_client_config_t config = {
         .url = DATA_URL,
         .event_handler = http_event_handler,
+        .timeout_ms = 3000,
+        .buffer_size = 4096,
+        .disable_auto_redirect = true, // 禁用自动重定向
+        .skip_cert_common_name_check = true, // 跳过证书检查
     };
+    
     esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (client == NULL) {
+        ESP_LOGE(TAG, "Failed to initialize HTTP client");
+        return;
+    }
+    
+    // 设置请求头
+    esp_http_client_set_method(client, HTTP_METHOD_GET);
+    esp_http_client_set_header(client, "Accept", "text/plain");
+    esp_http_client_set_header(client, "User-Agent", "ESP32-HTTP-Client");
+    
+    ESP_LOGD(TAG, "Performing HTTP request");
     esp_err_t err = esp_http_client_perform(client);
     
     if (err == ESP_OK) {
         int status_code = esp_http_client_get_status_code(client);
+        ESP_LOGD(TAG, "HTTP GET Status = %d", status_code);
+        
         if (status_code == 200) {
             dataError = false;  // 重置数据错误标志
         } else {
             dataError = true;   // 设置数据错误标志
-            ESP_LOGE(TAG, "HTTP GET request failed: %d", status_code);
+            ESP_LOGE(TAG, "HTTP GET request failed with status code: %d", status_code);
         }
     } else {
         dataError = true;   // 设置数据错误标志
-        ESP_LOGE(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "HTTP GET request failed: %s (error code: %d)", esp_err_to_name(err), err);
+        
+        // 添加更详细的错误诊断
+        if (err == ESP_ERR_HTTP_CONNECT) {
+            ESP_LOGE(TAG, "连接失败 - 请检查服务器地址是否正确或服务器是否运行");
+        } else if (err == ESP_ERR_HTTP_CONNECTING) {
+            ESP_LOGE(TAG, "连接超时 - 请检查网络连接和服务器状态");
+        } else if (err == ESP_ERR_HTTP_FETCH_HEADER) {
+            ESP_LOGE(TAG, "获取响应头失败 - 服务器可能未正确响应");
+        } else if (err == ESP_ERR_HTTP_INVALID_TRANSPORT) {
+            ESP_LOGE(TAG, "传输层错误");
+        } else if (err == ESP_ERR_HTTP_MAX_REDIRECT) {
+            ESP_LOGE(TAG, "重定向次数超过限制");
+        } else if (err == ESP_ERR_HTTP_WRITE_DATA) {
+            ESP_LOGE(TAG, "写入请求数据失败");
+        } else if (err == ESP_ERR_HTTP_INVALID_TRANSPORT) {
+            ESP_LOGE(TAG, "无效的传输");
+        }
     }
     
+    // 确保不管发生什么都清理客户端
     esp_http_client_cleanup(client);
     
     // 更新WiFi状态以反映数据错误
@@ -229,7 +347,13 @@ void PowerMonitor_FetchData(void) {
 
 // 解析数据
 void PowerMonitor_ParseData(char* payload) {
-    ESP_LOGI(TAG, "Parsing power data");
+    // 检查有效载荷
+    if (payload == NULL || strlen(payload) == 0) {
+        ESP_LOGE(TAG, "Empty payload received for parsing");
+        return;
+    }
+    
+    ESP_LOGD(TAG, "Parsing power data");
     
     // 重置总功率
     totalPower = 0.0f;
@@ -245,16 +369,27 @@ void PowerMonitor_ParseData(char* payload) {
             // 提取端口ID
             char* idStart = strchr(line, '"') + 1;
             char* idEnd = strchr(idStart, '"');
+            if (idEnd == NULL) {
+                ESP_LOGW(TAG, "Invalid format in current line: %s", line);
+                continue;
+            }
+            
             *idEnd = '\0';
             int portId = atoi(idStart);
             
             // 提取电流值
             char* valueStart = strchr(idEnd + 1, '}') + 1;
+            if (valueStart == NULL) {
+                ESP_LOGW(TAG, "Invalid format in current value: %s", line);
+                continue;
+            }
+            
             int current = atoi(valueStart);
             
             // 更新端口电流
             if (portId >= 0 && portId < MAX_PORTS) {
                 portInfos[portId].current = current;
+                ESP_LOGD(TAG, "Parsed port %d current: %d mA", portId, current);
             }
         }
         // 解析电压数据
@@ -262,16 +397,27 @@ void PowerMonitor_ParseData(char* payload) {
             // 提取端口ID
             char* idStart = strchr(line, '"') + 1;
             char* idEnd = strchr(idStart, '"');
+            if (idEnd == NULL) {
+                ESP_LOGW(TAG, "Invalid format in voltage line: %s", line);
+                continue;
+            }
+            
             *idEnd = '\0';
             int portId = atoi(idStart);
             
             // 提取电压值
             char* valueStart = strchr(idEnd + 1, '}') + 1;
+            if (valueStart == NULL) {
+                ESP_LOGW(TAG, "Invalid format in voltage value: %s", line);
+                continue;
+            }
+            
             int voltage = atoi(valueStart);
             
             // 更新端口电压
             if (portId >= 0 && portId < MAX_PORTS) {
                 portInfos[portId].voltage = voltage;
+                ESP_LOGD(TAG, "Parsed port %d voltage: %d mV", portId, voltage);
             }
         }
         // 解析状态数据
@@ -319,7 +465,28 @@ void PowerMonitor_ParseData(char* payload) {
         totalPower += portInfos[i].power;
     }
     
-    ESP_LOGI(TAG, "Total power: %.2fW", totalPower);
+    // 添加一行日志显示所有端口的电源信息
+    ESP_LOGI(TAG, "Power Info: A=%.2fW(%dmA,%dmV), C1=%.2fW(%dmA,%dmV), C2=%.2fW(%dmA,%dmV), C3=%.2fW(%dmA,%dmV), C4=%.2fW(%dmA,%dmV), Total=%.2fW", 
+             portInfos[0].power, portInfos[0].current, portInfos[0].voltage,
+             portInfos[1].power, portInfos[1].current, portInfos[1].voltage,
+             portInfos[2].power, portInfos[2].current, portInfos[2].voltage,
+             portInfos[3].power, portInfos[3].current, portInfos[3].voltage,
+             portInfos[4].power, portInfos[4].current, portInfos[4].voltage,
+             totalPower);
+    
+    // 检查是否有有效数据需要更新UI
+    bool hasValidData = false;
+    for (int i = 0; i < MAX_PORTS; i++) {
+        if (portInfos[i].current > 0 || portInfos[i].voltage > 0) {
+            hasValidData = true;
+            break;
+        }
+    }
+    
+    if (!hasValidData) {
+        ESP_LOGW(TAG, "No valid power data found, skipping UI update");
+        return;
+    }
     
     // 更新UI
     PowerMonitor_UpdateUI();
@@ -373,6 +540,9 @@ void PowerMonitor_UpdateUI(void) {
         totalColor = 0xFF0000; // 红色
     }
     lv_obj_set_style_bg_color(ui_total_bar, lv_color_hex(totalColor), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    
+    // 强制LVGL立即更新UI
+    lv_refr_now(NULL);
 }
 
 // 更新UI上的WiFi状态
