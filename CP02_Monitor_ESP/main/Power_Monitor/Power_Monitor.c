@@ -460,8 +460,9 @@ void PowerMonitor_ParseData(char* payload) {
 void PowerMonitor_UpdateUI(void) {
     // 更新每个端口的显示
     for (int i = 0; i < MAX_PORTS; i++) {
-        // 更新功率值标签
-        lv_label_set_text_fmt(ui_power_values[i], "%.2fW", portInfos[i].power);
+        // 更新功率值标签 - 将浮点数转换为整数显示 (扩大100倍后显示)
+        int power_int = (int)(portInfos[i].power * 100);
+        lv_label_set_text_fmt(ui_power_values[i], "%d.%02dW", power_int / 100, power_int % 100);
         
         // 设置进度条颜色（基于功率值）
         uint32_t color;
@@ -483,8 +484,9 @@ void PowerMonitor_UpdateUI(void) {
         lv_bar_set_value(ui_power_bars[i], percent, LV_ANIM_OFF);
     }
     
-    // 更新总功率标签
-    lv_label_set_text_fmt(ui_total_label, "Total: %.2fW", totalPower);
+    // 更新总功率标签 - 将浮点数转换为整数显示
+    int total_power_int = (int)(totalPower * 100);
+    lv_label_set_text_fmt(ui_total_label, "Total: %d.%02dW", total_power_int / 100, total_power_int % 100);
     
     // 更新总功率进度条
     int totalPercent = (int)((totalPower / MAX_POWER_WATTS) * 100);
