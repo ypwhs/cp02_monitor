@@ -223,7 +223,7 @@ void PowerMonitor_CreateUI(void) {
     
     // 总功率标签
     ui_total_label = lv_label_create(ui_screen);
-    lv_label_set_text(ui_total_label, "Total: 0W");
+    lv_label_set_text(ui_total_label, "Total: 0.00W");
     lv_obj_set_style_text_color(ui_total_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_total_label, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(ui_total_label, LV_ALIGN_TOP_LEFT, 10, start_y + MAX_PORTS * item_height + 5);
