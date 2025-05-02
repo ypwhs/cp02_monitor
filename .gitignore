@@ -1,3 +1,9 @@
+build
+build/
+sdkconfig
+sdkconfig.ci
+sdkconfig.old
+
 # Prerequisites
 *.d
 
