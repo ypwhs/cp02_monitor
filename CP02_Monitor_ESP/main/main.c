@@ -64,7 +64,7 @@ void app_main(void)
     // 主循环
     while (1) {
         // LVGL定时器处理函数，需要定期调用
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(10));
         lv_timer_handler();
     }
 }
