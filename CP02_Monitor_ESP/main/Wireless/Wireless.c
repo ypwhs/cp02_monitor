@@ -133,6 +133,8 @@ void WiFi_Connect(const char* ssid, const char* password) {
     // 配置认证模式
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     
+    esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+    
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_connect());
     

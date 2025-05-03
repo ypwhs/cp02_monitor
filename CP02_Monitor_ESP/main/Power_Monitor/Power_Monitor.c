@@ -542,9 +542,6 @@ void PowerMonitor_UpdateUI(void) {
     
     // 使用简单方式设置值，避免动画引起的问题
     lv_bar_set_value(ui_total_bar, totalPercent, LV_ANIM_OFF);
-    
-    // 强制LVGL立即更新UI
-    lv_refr_now(NULL);
 }
 
 // 更新UI上的WiFi状态
@@ -577,11 +574,5 @@ void PowerMonitor_UpdateWiFiStatus(void) {
 
 // 定时器回调
 void PowerMonitor_TimerCallback(lv_timer_t *timer) {
-    // 将此操作交给LVGL定时器，减少直接阻塞
-    static uint8_t counter = 0;
-    
-    // 每两次调用才请求一次数据，减少请求频率
-    if (counter++ % 2 == 0) {
-        PowerMonitor_FetchData();
-    }
-} 
+    PowerMonitor_FetchData();
+}
