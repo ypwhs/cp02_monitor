@@ -9,6 +9,7 @@
 #include "LVGL_Driver.h"
 #include "Power_Monitor.h"
 #include "esp_log.h"
+#include "esp_pm.h"
 
 static const char *TAG = "CP02_MAIN";
 
@@ -42,6 +43,14 @@ void app_main(void)
     // 初始化功率监控
     ESP_LOGI(TAG, "Initializing Power Monitor");
     PowerMonitor_Init();
+
+    // 启用动态电源管理（可选，进一步省电）
+    esp_pm_config_esp32_t pm_config = {
+        .max_freq_mhz = 240, // 你的主频
+        .min_freq_mhz = 80,  // 最低主频
+        .light_sleep_enable = false,
+    };
+    ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
 
     ESP_LOGI(TAG, "Initialization complete");
     // 主循环
