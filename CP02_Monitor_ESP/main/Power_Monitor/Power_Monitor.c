@@ -45,12 +45,15 @@ static lv_timer_t *wifi_timer = NULL;
 static lv_timer_t *startup_anim_timer = NULL;
 static uint8_t startup_anim_progress = 0;
 
-// 定义WiFi状态更新的计时器回调函数
+// 添加一个全局变量来跟踪启动动画是否已完成
+static bool startup_animation_completed = false;
+
+// 修改 wifi_status_timer_cb 函数，只有在动画完成后才开始监控
 static void wifi_status_timer_cb(lv_timer_t *timer) {
     PowerMonitor_UpdateWiFiStatus();
     
-    // 如果WiFi连接成功且已获取IP地址，并且刷新定时器还未创建，则创建刷新定时器
-    if (WIFI_Connection && WIFI_GotIP && refresh_timer == NULL) {
+    // 如果WiFi连接成功且已获取IP地址，并且启动动画已完成，且刷新定时器还未创建，则创建刷新定时器
+    if (WIFI_Connection && WIFI_GotIP && startup_animation_completed && refresh_timer == NULL) {
         ESP_LOGI(TAG, "WiFi connected and IP obtained, starting power monitoring");
         ESP_LOGI(TAG, "Monitoring data from URL: %s", DATA_URL);
         refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
@@ -58,10 +61,10 @@ static void wifi_status_timer_cb(lv_timer_t *timer) {
     }
 }
 
-// 启动动画回调函数
+// 修改启动动画回调函数，在动画完成时设置标志
 static void startup_animation_cb(lv_timer_t *timer) {
     // 更新进度值
-    startup_anim_progress += 5;
+    startup_anim_progress += 10;
     
     // 为所有进度条设置进度
     for (int i = 0; i < MAX_PORTS; i++) {
@@ -81,6 +84,9 @@ static void startup_animation_cb(lv_timer_t *timer) {
             lv_bar_set_value(ui_power_bars[i], 0, LV_ANIM_OFF);
         }
         lv_bar_set_value(ui_total_bar, 0, LV_ANIM_OFF);
+        
+        // 设置动画完成标志
+        startup_animation_completed = true;
         
         ESP_LOGI(TAG, "Startup animation completed");
     }
@@ -180,6 +186,9 @@ void PowerMonitor_Init(void) {
     // 初始化WiFi状态
     WIFI_GotIP = false;
     
+    // 初始化启动动画标志
+    startup_animation_completed = false;
+    
     // 初始化端口信息
     for (int i = 0; i < MAX_PORTS; i++) {
         portInfos[i].id = i;
@@ -202,7 +211,7 @@ void PowerMonitor_Init(void) {
     
     // 启动动画：创建一个50ms的定时器，每次增加5%，总共20步，约1秒完成
     startup_anim_progress = 0;
-    startup_anim_timer = lv_timer_create(startup_animation_cb, 50, NULL);
+    startup_anim_timer = lv_timer_create(startup_animation_cb, 10, NULL);
     
     // 创建WiFi状态监控定时器 - 它会在WiFi连接后启动数据刷新定时器
     wifi_timer = lv_timer_create(wifi_status_timer_cb, 1000, NULL);
@@ -510,13 +519,45 @@ void PowerMonitor_ParseData(char* payload) {
     PowerMonitor_UpdateUI();
 }
 
-// 更新UI
+// 修改 PowerMonitor_UpdateUI 函数，基于电压使用不同颜色
 void PowerMonitor_UpdateUI(void) {
+    // 定义临时字符串缓冲区
+    char text_buf[64];
+    
     // 更新每个端口的显示
     for (int i = 0; i < MAX_PORTS; i++) {
-        // 更新功率值标签 - 将浮点数转换为整数显示 (扩大100倍后显示)
+        // 根据电压确定颜色代码
+        const char* color_code;
+        int voltage_mv = portInfos[i].voltage;
+        
+        // 设置电压对应的颜色代码，根据区间要求
+        if (voltage_mv > 21000) {                        // 21V以上
+            color_code = "#FF00FF";                      // 紫色
+        } else if (voltage_mv > 16000 && voltage_mv <= 21000) { // 16V~21V
+            color_code = "#FF0000";                      // 红色
+        } else if (voltage_mv > 13000 && voltage_mv <= 16000) { // 13V~16V
+            color_code = "#FF8800";                      // 橙色
+        } else if (voltage_mv > 10000 && voltage_mv <= 13000) { // 10V~13V
+            color_code = "#FFFF00";                      // 黄色
+        } else if (voltage_mv > 6000 && voltage_mv <= 10000) {  // 6V~10V
+            color_code = "#00FF00";                      // 绿色
+        } else if (voltage_mv >= 0 && voltage_mv <= 6000) {     // 0V~6V
+            color_code = "#FFFFFF";                      // 白色
+        } else {
+            color_code = "#888888";                      // 灰色（未识别电压）
+        }
+        
+        // 启用标签的重着色功能
+        lv_label_set_recolor(ui_power_values[i], true);
+        
+        // 更新功率值标签 - 将浮点数转换为整数显示，并添加颜色标记
         int power_int = (int)(portInfos[i].power * 100);
-        lv_label_set_text_fmt(ui_power_values[i], "%d.%02dW", power_int / 100, power_int % 100);
+        
+        // 使用sprintf格式化文本到缓冲区
+        sprintf(text_buf, "%s %d.%02dW#", color_code, power_int / 100, power_int % 100);
+        
+        // 设置标签文本
+        lv_label_set_text(ui_power_values[i], text_buf);
         
         // 更新进度条值（最大功率的百分比）
         int percent = (int)((portInfos[i].power / MAX_PORT_WATTS) * 100);
@@ -531,7 +572,15 @@ void PowerMonitor_UpdateUI(void) {
     
     // 更新总功率标签 - 将浮点数转换为整数显示
     int total_power_int = (int)(totalPower * 100);
-    lv_label_set_text_fmt(ui_total_label, "Total: %d.%02dW", total_power_int / 100, total_power_int % 100);
+    
+    // 启用总功率标签的重着色功能
+    lv_label_set_recolor(ui_total_label, true);
+    
+    // 使用sprintf格式化总功率文本
+    sprintf(text_buf, "Total: #FFFFFF %d.%02dW#", total_power_int / 100, total_power_int % 100);
+    
+    // 设置总功率标签
+    lv_label_set_text(ui_total_label, text_buf);
     
     // 更新总功率进度条
     int totalPercent = (int)((totalPower / MAX_POWER_WATTS) * 100);
