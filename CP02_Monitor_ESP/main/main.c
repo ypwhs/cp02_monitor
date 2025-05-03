@@ -10,6 +10,8 @@
 #include "Power_Monitor.h"
 #include "esp_log.h"
 #include "esp_pm.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 
 static const char *TAG = "CP02_MAIN";
 
@@ -44,19 +46,25 @@ void app_main(void)
     ESP_LOGI(TAG, "Initializing Power Monitor");
     PowerMonitor_Init();
 
-    // 启用动态电源管理（可选，进一步省电）
-    esp_pm_config_esp32_t pm_config = {
-        .max_freq_mhz = 240, // 你的主频
-        .min_freq_mhz = 80,  // 最低主频
-        .light_sleep_enable = false,
+    #if CONFIG_PM_ENABLE
+    // Configure dynamic frequency scaling:
+    // maximum and minimum frequencies are set in sdkconfig,
+    // automatic light sleep is enabled if tickless idle support is enabled.
+    esp_pm_config_t pm_config = {
+            .max_freq_mhz = 240,
+            .min_freq_mhz = 80,
+#if CONFIG_FREERTOS_USE_TICKLESS_IDLE
+            .light_sleep_enable = true
+#endif
     };
-    ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
+    ESP_ERROR_CHECK( esp_pm_configure(&pm_config) );
+#endif // CONFIG_PM_ENABLE
 
     ESP_LOGI(TAG, "Initialization complete");
     // 主循环
     while (1) {
         // LVGL定时器处理函数，需要定期调用
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(100));
         lv_timer_handler();
     }
 }
