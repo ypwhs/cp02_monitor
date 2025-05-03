@@ -45,8 +45,15 @@ static lv_timer_t *wifi_timer = NULL;
 static lv_timer_t *startup_anim_timer = NULL;
 static uint8_t startup_anim_progress = 0;
 
+// WiFi图标闪烁控制
+static lv_timer_t *wifi_blink_timer = NULL;
+static bool wifi_icon_state = false;  // 控制WiFi图标颜色切换
+
 // 添加一个全局变量来跟踪启动动画是否已完成
 static bool startup_animation_completed = false;
+
+// 添加一个全局变量来记录上次请求的时间戳
+static uint32_t last_data_fetch_time = 0;
 
 // 修改 wifi_status_timer_cb 函数，只有在动画完成后才开始监控
 static void wifi_status_timer_cb(lv_timer_t *timer) {
@@ -89,6 +96,31 @@ static void startup_animation_cb(lv_timer_t *timer) {
         startup_animation_completed = true;
         
         ESP_LOGI(TAG, "Startup animation completed");
+    }
+}
+
+
+// WiFi状态图标闪烁计时器回调
+static void wifi_blink_timer_cb(lv_timer_t *timer) {
+    // 只有当WiFi连接成功且没有数据错误时才闪烁
+    if (WIFI_Connection && WIFI_GotIP && !dataError) {
+        wifi_icon_state = !wifi_icon_state;
+        if (wifi_icon_state) {
+            // 绿色
+            lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0x00FF00), LV_PART_MAIN | LV_STATE_DEFAULT);
+        } else {
+            // 白色
+            lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
+    } else if (dataError) {
+        // 数据错误时保持红色
+        lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFF0000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    } else if (!WIFI_Connection) {
+        // WiFi断开连接时保持红色
+        lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFF0000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    } else if (WIFI_Connection && !WIFI_GotIP) {
+        // 正在获取IP
+        lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFFFF00), LV_PART_MAIN | LV_STATE_DEFAULT);
     }
 }
 
@@ -189,6 +221,9 @@ void PowerMonitor_Init(void) {
     // 初始化启动动画标志
     startup_animation_completed = false;
     
+    // 初始化数据获取时间戳
+    last_data_fetch_time = esp_log_timestamp();
+    
     // 初始化端口信息
     for (int i = 0; i < MAX_PORTS; i++) {
         portInfos[i].id = i;
@@ -239,6 +274,9 @@ void PowerMonitor_CreateUI(void) {
     lv_label_set_text(ui_wifi_status, "WiFi");
     lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFFFF00), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(ui_wifi_status, LV_ALIGN_TOP_RIGHT, -10, 5);
+    
+    // 开始WiFi图标闪烁定时器
+    wifi_blink_timer = lv_timer_create(wifi_blink_timer_cb, 500, NULL);
     
     // 屏幕高度只有172像素，布局需要紧凑
     uint8_t start_y = 30;
@@ -314,12 +352,11 @@ void PowerMonitor_CreateUI(void) {
 // 从网络获取数据
 void PowerMonitor_FetchData(void) {
     static esp_http_client_handle_t client = NULL;
-    static uint32_t last_request_time = 0;
     uint32_t current_time = esp_log_timestamp();
     
-    // 限制请求频率，确保上一次请求完成
-    if (current_time - last_request_time < 300) {
-        return; // 限制请求频率，防止过于频繁
+    // 确保请求间隔大于REFRESH_INTERVAL
+    if (current_time - last_data_fetch_time < REFRESH_INTERVAL) {
+        return; // 间隔不够，跳过本次请求
     }
     
     // 如果WiFi未连接或未获取IP地址，则不尝试获取数据
@@ -353,8 +390,9 @@ void PowerMonitor_FetchData(void) {
     }
     
     // 记录请求开始时间
-    last_request_time = current_time;
-    
+    // ESP_LOGI(TAG, "Fetching data from %s (after %d ms)", DATA_URL, (int)(current_time - last_data_fetch_time));
+    last_data_fetch_time = current_time;
+
     // 执行非阻塞HTTP请求
     // 注意：在实际实现中，这可能需要单独的任务或非阻塞API
     esp_err_t err = esp_http_client_perform(client);
@@ -604,9 +642,9 @@ void PowerMonitor_UpdateWiFiStatus(void) {
             lv_label_set_text(label, "WiFi: #FF0000 DATA ERROR#");
             ESP_LOGW(TAG, "WiFi connected but data error occurred");
         } else {
-            // WiFi已连接且数据正常
+            // WiFi已连接且数据正常 - 颜色由闪烁定时器控制
             lv_label_set_text(ui_wifi_status, "WiFi");
-            lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0x00FF00), LV_PART_MAIN | LV_STATE_DEFAULT);
+            // 不在这里设置颜色，由wifi_blink_timer_cb处理
         }
     } else if (WIFI_Connection && !WIFI_GotIP) {
         // WiFi已连接但未获取IP
@@ -623,5 +661,17 @@ void PowerMonitor_UpdateWiFiStatus(void) {
 
 // 定时器回调
 void PowerMonitor_TimerCallback(lv_timer_t *timer) {
+    static uint32_t last_log_time = 0;
+    uint32_t current_time = esp_log_timestamp();
+    
+    // 执行数据获取函数
     PowerMonitor_FetchData();
+    
+    // 如果从上次获取数据已经过了太长时间，记录日志（仅用于调试）
+    if (current_time - last_data_fetch_time > REFRESH_INTERVAL * 2 && 
+        current_time - last_log_time > 1000) {  // 限制日志频率
+        ESP_LOGW(TAG, "数据获取间隔超过预期: %d ms (预期: %d ms)", 
+                 (int)(current_time - last_data_fetch_time), REFRESH_INTERVAL);
+        last_log_time = current_time;
+    }
 }
