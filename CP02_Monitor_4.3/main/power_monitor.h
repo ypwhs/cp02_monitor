@@ -19,12 +19,6 @@
 extern "C" {
 #endif
 
-// 常量定义
-#define MAX_PORTS 5         // 最大端口数量
-#define DEFAULT_MAX_POWER_WATTS 100.0f  // 默认最大总功率
-#define DEFAULT_MAX_PORT_WATTS 20.0f    // 默认每个端口最大功率
-#define DEFAULT_REFRESH_INTERVAL 2000   // 默认刷新间隔 (ms)
-
 // 端口信息结构体
 typedef struct {
     int id;                 // 端口ID

@@ -12,6 +12,12 @@
 
 static const char *TAG = "MAIN";
 
+// 全局常量定义
+const float MAX_POWER_WATTS = 160;    // 最大总功率
+const float MAX_PORT_WATTS = 140;      // 每个端口最大功率
+const int REFRESH_INTERVAL = 500;    // 刷新间隔 (ms)
+const char DATA_URL[128] = "http://192.168.1.19/metrics"; // API URL
+
 // 设置更改回调函数
 static void settings_change_callback(void)
 {

@@ -20,6 +20,7 @@ static lv_obj_t *ui_ip_setting_screen = NULL;
 static lv_obj_t *ui_ssid_input = NULL;
 static lv_obj_t *ui_password_input = NULL;
 static lv_obj_t *ui_ip_input = NULL;
+static lv_obj_t *ui_device_ip_input = NULL;  // 新增：设备IP输入
 static lv_obj_t *ui_keyboard = NULL;
 
 // 设置改变回调
@@ -30,6 +31,7 @@ static void wifi_save_btn_event_cb(lv_event_t *e);
 static void wifi_cancel_btn_event_cb(lv_event_t *e);
 static void ip_save_btn_event_cb(lv_event_t *e);
 static void ip_cancel_btn_event_cb(lv_event_t *e);
+static void device_ip_btn_event_cb(lv_event_t *e);  // 新增：设备IP按钮回调
 static void input_focused_cb(lv_event_t *e);
 static void keyboard_ready_cb(lv_event_t *e);
 
@@ -109,6 +111,18 @@ void settings_ui_create(void)
     lv_textarea_set_password_mode(ui_password_input, true);  // 确保密码输入框始终为密码模式
     lv_obj_add_event_cb(ui_password_input, input_focused_cb, LV_EVENT_CLICKED, NULL);
     
+    // 创建设备IP按钮 - 添加切换到小电拼IP设置的按钮
+    lv_obj_t *device_ip_btn = lv_btn_create(ui_wifi_setting_screen);
+    lv_obj_set_size(device_ip_btn, 120, 50);
+    lv_obj_align(device_ip_btn, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_bg_color(device_ip_btn, lv_color_hex(0x2196F3), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(device_ip_btn, device_ip_btn_event_cb, LV_EVENT_CLICKED, NULL);
+    
+    lv_obj_t *device_ip_btn_label = lv_label_create(device_ip_btn);
+    lv_label_set_text(device_ip_btn_label, "设备IP设置");
+    lv_obj_set_style_text_font(device_ip_btn_label, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_center(device_ip_btn_label);
+    
     // 保存按钮 - 使用绿色
     lv_obj_t *wifi_save_btn = lv_btn_create(ui_wifi_setting_screen);
     lv_obj_set_size(wifi_save_btn, 120, 50);
@@ -145,36 +159,60 @@ void settings_ui_create(void)
     lv_obj_set_style_text_font(ip_title, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(ip_title, LV_ALIGN_TOP_MID, 0, 10);
     
-    // 创建IP输入区域
+    // 创建WiFi IP输入区域
     lv_obj_t *ip_cont = lv_obj_create(ui_ip_setting_screen);
-    lv_obj_set_size(ip_cont, 300, 60);  // 增加高度
+    lv_obj_set_size(ip_cont, 350, 60);  // 增加高度
     lv_obj_align(ip_cont, LV_ALIGN_TOP_MID, 0, 60);
     lv_obj_set_style_pad_all(ip_cont, 5, LV_PART_MAIN);
     lv_obj_set_style_bg_color(ip_cont, lv_color_hex(0xF5F5F5), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(ip_cont, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(ip_cont, lv_color_hex(0xDDDDDD), LV_PART_MAIN | LV_STATE_DEFAULT);
     
-    // IP标签
+    // WiFi IP标签
     lv_obj_t *ip_label = lv_label_create(ip_cont);
-    lv_label_set_text(ip_label, "设备IP:");
+    lv_label_set_text(ip_label, "WiFi设备IP:");
     lv_obj_set_style_text_color(ip_label, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ip_label, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(ip_label, LV_ALIGN_LEFT_MID, 5, 0);
     
-    // IP输入框
+    // WiFi IP输入框
     ui_ip_input = lv_textarea_create(ip_cont);
     lv_obj_set_size(ui_ip_input, 200, 45);  // 增加高度
     lv_obj_align(ui_ip_input, LV_ALIGN_RIGHT_MID, -5, 0);  // 靠右对齐
-    lv_textarea_set_placeholder_text(ui_ip_input, "输入设备IP");
+    lv_textarea_set_placeholder_text(ui_ip_input, "输入WiFi设备IP");
     lv_obj_set_style_text_font(ui_ip_input, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(ui_ip_input, input_focused_cb, LV_EVENT_CLICKED, NULL);
     
+    // 创建小电拼设备IP输入区域
+    lv_obj_t *device_ip_cont = lv_obj_create(ui_ip_setting_screen);
+    lv_obj_set_size(device_ip_cont, 350, 60);  // 增加高度
+    lv_obj_align(device_ip_cont, LV_ALIGN_TOP_MID, 0, 140);  // 放在WiFi IP区域下方
+    lv_obj_set_style_pad_all(device_ip_cont, 5, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(device_ip_cont, lv_color_hex(0xF5F5F5), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(device_ip_cont, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(device_ip_cont, lv_color_hex(0xDDDDDD), LV_PART_MAIN | LV_STATE_DEFAULT);
+    
+    // 小电拼设备IP标签
+    lv_obj_t *device_ip_text = lv_label_create(device_ip_cont);
+    lv_label_set_text(device_ip_text, "小电拼IP:");
+    lv_obj_set_style_text_color(device_ip_text, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(device_ip_text, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(device_ip_text, LV_ALIGN_LEFT_MID, 5, 0);
+    
+    // 小电拼设备IP输入框
+    ui_device_ip_input = lv_textarea_create(device_ip_cont);
+    lv_obj_set_size(ui_device_ip_input, 200, 45);  // 增加高度
+    lv_obj_align(ui_device_ip_input, LV_ALIGN_RIGHT_MID, -5, 0);  // 靠右对齐
+    lv_textarea_set_placeholder_text(ui_device_ip_input, "输入小电拼IP");
+    lv_obj_set_style_text_font(ui_device_ip_input, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(ui_device_ip_input, input_focused_cb, LV_EVENT_CLICKED, NULL);
+    
     // 说明标签
     lv_obj_t *ip_desc = lv_label_create(ui_ip_setting_screen);
-    lv_label_set_text(ip_desc, "注意: 设置设备IP地址\n格式: 192.168.1.100");
+    lv_label_set_text(ip_desc, "注意: 需要设置WiFi设备IP和小电拼IP地址\n格式: 192.168.1.100");
     lv_obj_set_style_text_color(ip_desc, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ip_desc, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_align(ip_desc, LV_ALIGN_TOP_MID, 0, 135);  // 调整位置
+    lv_obj_align(ip_desc, LV_ALIGN_TOP_MID, 0, 220);  // 调整位置
     
     // 保存按钮
     lv_obj_t *ip_save_btn = lv_btn_create(ui_ip_setting_screen);
@@ -210,13 +248,27 @@ void settings_ui_create(void)
     lv_obj_add_event_cb(ui_keyboard, keyboard_ready_cb, LV_EVENT_READY, NULL);
     lv_obj_add_event_cb(ui_keyboard, keyboard_ready_cb, LV_EVENT_CANCEL, NULL);
     
-    // 加载当前的WiFi设置
+    // 加载当前的WiFi和设备IP设置
     wifi_user_config_t config;
     if (wifi_manager_get_config(&config) == ESP_OK) {
         lv_textarea_set_text(ui_ssid_input, config.ssid);
         lv_textarea_set_text(ui_password_input, ""); // 不显示密码，即使配置中有密码
         lv_textarea_set_placeholder_text(ui_password_input, "输入密码");
         lv_textarea_set_text(ui_ip_input, config.device_ip);
+        
+        // 设置小电拼IP默认值
+        const char* metrics_url = power_monitor_get_data_url();
+        if (metrics_url != NULL) {
+            // 从URL中解析IP地址
+            char device_ip[128] = "";
+            if (sscanf(metrics_url, "http://%[^/]/metrics", device_ip) == 1) {
+                lv_textarea_set_text(ui_device_ip_input, device_ip);
+            } else {
+                lv_textarea_set_text(ui_device_ip_input, "192.168.1.19");  // 默认值
+            }
+        } else {
+            lv_textarea_set_text(ui_device_ip_input, "192.168.1.19");  // 默认值
+        }
     }
 }
 
@@ -238,6 +290,13 @@ static void input_focused_cb(lv_event_t *e)
 static void keyboard_ready_cb(lv_event_t *e)
 {
     lv_obj_add_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
+// 小电拼IP设置按钮回调
+static void device_ip_btn_event_cb(lv_event_t *e)
+{
+    ESP_LOGI(TAG, "Opening device IP settings");
+    settings_ui_open_ip_settings();
 }
 
 // WiFi设置保存按钮回调
@@ -309,46 +368,51 @@ static void ip_save_btn_event_cb(lv_event_t *e)
     ESP_LOGI(TAG, "Saving IP settings");
     
     // 获取输入的值
-    const char *ip = lv_textarea_get_text(ui_ip_input);
+    const char *device_ip = lv_textarea_get_text(ui_ip_input);
+    const char *metrics_ip = lv_textarea_get_text(ui_device_ip_input);
     
-    // 验证IP不为空
-    if (strlen(ip) == 0) {
-        // 显示错误消息
-        lv_obj_t *alert = lv_msgbox_create(NULL, "Error", "Device IP cannot be empty", NULL, true);
-        lv_obj_center(alert);
-        return;
-    }
-    
-    // 创建配置
+    // 保存WiFi设备IP设置
     wifi_user_config_t config;
-    wifi_manager_get_config(&config); // 获取当前配置
+    if (wifi_manager_get_config(&config) == ESP_OK) {
+        strncpy(config.device_ip, device_ip, sizeof(config.device_ip) - 1);
+        config.device_ip[sizeof(config.device_ip) - 1] = '\0';
+        
+        // 保存修改后的配置
+        esp_err_t err = wifi_manager_save_config(&config);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Error saving WiFi device IP settings: %s", esp_err_to_name(err));
+            
+            // 创建一个消息框显示错误
+            lv_obj_t *mbox = lv_msgbox_create(NULL, "错误", "保存WiFi设备IP设置失败", NULL, true);
+            lv_obj_set_style_text_font(mbox, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_center(mbox);
+            return;
+        }
+    }
     
-    // 更新设置
-    strncpy(config.device_ip, ip, MAX_IP_LEN);
-    
-    // 保存配置
-    esp_err_t err = wifi_manager_set_config(&config);
+    // 保存小电拼IP设置（通过更新数据URL）
+    char url[128];
+    snprintf(url, sizeof(url), "http://%s/metrics", metrics_ip);
+    esp_err_t err = power_monitor_set_data_url(url);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to save IP config: %s", esp_err_to_name(err));
-        // 显示错误消息
-        lv_obj_t *alert = lv_msgbox_create(NULL, "Error", "Failed to save IP settings", NULL, true);
-        lv_obj_center(alert);
+        ESP_LOGE(TAG, "Error saving metrics URL: %s", esp_err_to_name(err));
+        
+        // 创建一个消息框显示错误
+        lv_obj_t *mbox = lv_msgbox_create(NULL, "错误", "保存小电拼IP设置失败", NULL, true);
+        lv_obj_set_style_text_font(mbox, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_center(mbox);
         return;
     }
     
-    // 隐藏键盘
-    lv_obj_add_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
+    ESP_LOGI(TAG, "IP settings saved successfully");
+    ESP_LOGI(TAG, "  WiFi Device IP: %s", device_ip);
+    ESP_LOGI(TAG, "  Metrics URL: %s", url);
     
-    // 关闭设置页面
+    // 关闭设置屏幕，返回主屏幕
     settings_ui_close_ip_settings();
     
-    // 更新数据URL
-    char url[128];
-    snprintf(url, sizeof(url), "http://%s/metrics", ip);
-    power_monitor_set_data_url(url);
-    
-    // 调用设置改变回调
-    if (change_callback) {
+    // 通知设置已更改
+    if (change_callback != NULL) {
         change_callback();
     }
 }

@@ -18,11 +18,16 @@
 
 static const char *TAG = "POWER_MONITOR";
 
-// 常量
-static float MAX_POWER_WATTS = DEFAULT_MAX_POWER_WATTS;    // 最大总功率
-static float MAX_PORT_WATTS = DEFAULT_MAX_PORT_WATTS;      // 每个端口最大功率
-static char DATA_URL[128] = "http://192.168.1.19/metrics"; // API URL
-static int REFRESH_INTERVAL = DEFAULT_REFRESH_INTERVAL;    // 刷新间隔 (ms)
+// 全局常量定义
+#define MAX_PORTS 5
+extern const float MAX_POWER_WATTS;
+extern const float MAX_PORT_WATTS;
+extern const char DATA_URL[128];
+extern const int REFRESH_INTERVAL;
+
+// 本地可修改变量
+static char local_data_url[128] = {0};
+static int local_refresh_interval = 0;
 
 // 全局变量
 static port_info_t portInfos[MAX_PORTS];
@@ -81,6 +86,11 @@ esp_err_t power_monitor_init(void)
 {
     ESP_LOGI(TAG, "初始化电源监控模块...");
     
+    // 初始化本地变量
+    strncpy(local_data_url, DATA_URL, sizeof(local_data_url) - 1);
+    local_data_url[sizeof(local_data_url) - 1] = '\0';
+    local_refresh_interval = REFRESH_INTERVAL;
+    
     // 初始化端口信息
     for (int i = 0; i < MAX_PORTS; i++) {
         portInfos[i].id = i;
@@ -124,9 +134,9 @@ static void wifi_status_timer_cb(lv_timer_t *timer)
     // 如果WiFi连接成功且已获取IP地址，并且启动动画已完成，且刷新定时器还未创建，则创建刷新定时器
     if (WIFI_Connection && WIFI_GotIP && startup_animation_completed && refresh_timer == NULL) {
         ESP_LOGI(TAG, "WiFi已连接并获取IP，开始监控电源数据");
-        ESP_LOGI(TAG, "从URL获取数据: %s", DATA_URL);
-        refresh_timer = lv_timer_create(power_monitor_timer_callback, REFRESH_INTERVAL, NULL);
-        ESP_LOGI(TAG, "刷新定时器已创建，间隔: %d ms", REFRESH_INTERVAL);
+        ESP_LOGI(TAG, "从URL获取数据: %s", local_data_url);
+        refresh_timer = lv_timer_create(power_monitor_timer_callback, local_refresh_interval, NULL);
+        ESP_LOGI(TAG, "刷新定时器已创建，间隔: %d ms", local_refresh_interval);
     }
 }
 
@@ -193,10 +203,10 @@ static void power_monitor_timer_callback(lv_timer_t *timer)
     power_monitor_fetch_data();
     
     // 如果从上次获取数据已经过了太长时间，记录日志（仅用于调试）
-    if (current_time - last_data_fetch_time > REFRESH_INTERVAL * 2 && 
+    if (current_time - last_data_fetch_time > local_refresh_interval * 2 && 
         current_time - last_log_time > 1000) {  // 限制日志频率
         ESP_LOGW(TAG, "数据获取间隔超过预期: %d ms (预期: %d ms)", 
-                 (int)(current_time - last_data_fetch_time), REFRESH_INTERVAL);
+                 (int)(current_time - last_data_fetch_time), local_refresh_interval);
         last_log_time = current_time;
     }
 }
@@ -295,10 +305,11 @@ esp_err_t power_monitor_set_data_url(const char* url)
         return ESP_ERR_INVALID_ARG;
     }
     
-    strncpy(DATA_URL, url, sizeof(DATA_URL) - 1);
-    DATA_URL[sizeof(DATA_URL) - 1] = '\0';
+    // 复制到本地变量
+    strncpy(local_data_url, url, sizeof(local_data_url) - 1);
+    local_data_url[sizeof(local_data_url) - 1] = '\0';
     
-    ESP_LOGI(TAG, "设置数据URL: %s", DATA_URL);
+    ESP_LOGI(TAG, "设置数据URL: %s", local_data_url);
     
     // 如果客户端已初始化，需要重新初始化
     if (client != NULL) {
@@ -312,7 +323,7 @@ esp_err_t power_monitor_set_data_url(const char* url)
 // 获取当前数据URL
 const char* power_monitor_get_data_url(void)
 {
-    return DATA_URL;
+    return local_data_url;
 }
 
 // 设置刷新间隔
@@ -322,12 +333,13 @@ void power_monitor_set_refresh_interval(int interval_ms)
         interval_ms = 500; // 最小刷新间隔限制
     }
     
-    REFRESH_INTERVAL = interval_ms;
-    ESP_LOGI(TAG, "设置刷新间隔: %d ms", REFRESH_INTERVAL);
+    // 更新本地变量
+    local_refresh_interval = interval_ms;
+    ESP_LOGI(TAG, "设置刷新间隔: %d ms", local_refresh_interval);
     
     // 如果定时器已存在，更新间隔
     if (refresh_timer != NULL) {
-        lv_timer_set_period(refresh_timer, REFRESH_INTERVAL);
+        lv_timer_set_period(refresh_timer, local_refresh_interval);
     }
 }
 
@@ -365,6 +377,26 @@ void power_monitor_on_settings_change(void)
     }
 }
 
+// 获取基于电压的颜色 - 与原Power_Monitor.c保持一致的逻辑
+static lv_color_t get_voltage_color(int voltage_mv)
+{
+    if (voltage_mv > 21000) {                           // 21V以上
+        return lv_color_hex(0xFF00FF);                  // 紫色
+    } else if (voltage_mv > 16000 && voltage_mv <= 21000) { // 16V~21V
+        return lv_color_hex(0xFF0000);                  // 红色
+    } else if (voltage_mv > 13000 && voltage_mv <= 16000) { // 13V~16V
+        return lv_color_hex(0xFF8800);                  // 橙色
+    } else if (voltage_mv > 10000 && voltage_mv <= 13000) { // 10V~13V
+        return lv_color_hex(0xFFFF00);                  // 黄色
+    } else if (voltage_mv > 6000 && voltage_mv <= 10000) {  // 6V~10V
+        return lv_color_hex(0x00FF00);                  // 绿色
+    } else if (voltage_mv >= 0 && voltage_mv <= 6000) {     // 0V~6V
+        return lv_color_hex(0x444444);                  // 黑色（白底黑字）
+    } else {
+        return lv_color_hex(0x888888);                  // 灰色（未识别电压）
+    }
+}
+
 // 创建电源显示UI
 esp_err_t power_monitor_create_ui(void)
 {
@@ -374,28 +406,21 @@ esp_err_t power_monitor_create_ui(void)
     ui_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(ui_screen, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     
-    // 计算布局参数
-    int screen_width = 320;  // 屏幕宽度 (基于Waveshare RGB LCD)
-    int screen_height = 240; // 屏幕高度
+    // 计算布局参数 - 调整为800*480屏幕
+    int screen_width = 800;  // 屏幕宽度
+    int screen_height = 480; // 屏幕高度
     
-    // 标题
+    // 标题 - 字体加大到24
     ui_title = lv_label_create(ui_screen);
     lv_label_set_text(ui_title, "CP-02 Monitor");
     lv_obj_set_style_text_color(ui_title, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_title, &lv_font_montserrat_20, LV_PART_MAIN | LV_STATE_DEFAULT);  // 字号改大
-    lv_obj_align(ui_title, LV_ALIGN_TOP_MID, 0, 5);
+    lv_obj_set_style_text_font(ui_title, &lv_font_montserrat_24, LV_PART_MAIN | LV_STATE_DEFAULT);  // 字号改为24
+    lv_obj_align(ui_title, LV_ALIGN_TOP_MID, 0, 10);
     
-    // WiFi状态 - 移动到右上角
-    ui_wifi_status = lv_label_create(ui_screen);
-    lv_label_set_text(ui_wifi_status, "WiFi");
-    lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0x0000FF), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_wifi_status, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_align(ui_wifi_status, LV_ALIGN_TOP_RIGHT, -80, 5);
-    
-    // 设置按钮
+    // 设置按钮 - 调整位置和大小
     ui_settings_btn = lv_btn_create(ui_screen);
-    lv_obj_set_size(ui_settings_btn, 60, 30);
-    lv_obj_align(ui_settings_btn, LV_ALIGN_TOP_RIGHT, -10, 5);
+    lv_obj_set_size(ui_settings_btn, 80, 40);
+    lv_obj_align(ui_settings_btn, LV_ALIGN_TOP_RIGHT, -15, 10);
     lv_obj_set_style_bg_color(ui_settings_btn, lv_color_hex(0x2196F3), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(ui_settings_btn, settings_btn_event_cb, LV_EVENT_CLICKED, NULL);
     
@@ -404,90 +429,60 @@ esp_err_t power_monitor_create_ui(void)
     lv_obj_set_style_text_font(btn_label, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);  // 中文字体
     lv_obj_center(btn_label);
     
+    // WiFi状态 - 与设置按钮对齐
+    ui_wifi_status = lv_label_create(ui_screen);
+    lv_label_set_text(ui_wifi_status, "WiFi");
+    lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0x0000FF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_wifi_status, &lv_font_montserrat_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align_to(ui_wifi_status, ui_settings_btn, LV_ALIGN_OUT_LEFT_MID, -10, 0);
+    
     // 开始WiFi图标闪烁定时器
     wifi_blink_timer = lv_timer_create(wifi_blink_timer_cb, 500, NULL);
     
-    // 创建表格显示功率、电压、电流 - 放在底部，加大尺寸
-    lv_obj_t *table = lv_table_create(ui_screen);
-    lv_obj_align(table, LV_ALIGN_BOTTOM_MID, 0, -5);
-    lv_obj_set_size(table, 320, 130); // 进一步加大高度
+    // 创建一个大的容器，包含所有功率条
+    lv_obj_t *power_container = lv_obj_create(ui_screen);
+    lv_obj_set_size(power_container, screen_width - 40, 350);
+    lv_obj_align(power_container, LV_ALIGN_TOP_MID, 0, 60);
+    lv_obj_set_style_bg_color(power_container, lv_color_hex(0xFAFAFA), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(power_container, lv_color_hex(0xDDDDDD), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(power_container, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(power_container, 10, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_all(power_container, 15, LV_PART_MAIN | LV_STATE_DEFAULT);
     
-    // 设置表格样式
-    lv_obj_set_style_bg_color(table, lv_color_hex(0xF5F5F5), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(table, lv_color_hex(0xDDDDDD), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(table, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    // 为每个端口创建水平功率条和标签 - 调整尺寸以适应更大的屏幕
+    int bar_height = 20;     // 条的高度
     
-    // 改进表格样式，移除滚动条
-    lv_obj_set_style_pad_all(table, 2, LV_PART_MAIN);
-    lv_obj_set_style_border_width(table, 1, LV_PART_MAIN);
-    lv_obj_set_style_text_font(table, &cn_16, LV_PART_MAIN); // 使用中文字体
-    lv_obj_clear_flag(table, LV_OBJ_FLAG_SCROLLABLE); // 移除滚动功能
-    
-    // 设置表格列宽 - 调整以适应屏幕宽度
-    lv_table_set_col_width(table, 0, 60);  // 端口列
-    lv_table_set_col_width(table, 1, 85);  // 功率列
-    lv_table_set_col_width(table, 2, 85);  // 电压列
-    lv_table_set_col_width(table, 3, 85);  // 电流列
-    
-    // 设置表头
-    lv_table_set_cell_value(table, 0, 0, "端口");
-    lv_table_set_cell_value(table, 0, 1, "功率(W)");
-    lv_table_set_cell_value(table, 0, 2, "电压(V)");
-    lv_table_set_cell_value(table, 0, 3, "电流(A)");
-    
-    // 表头样式
-    lv_obj_set_style_bg_color(table, lv_color_hex(0xE0E0E0), LV_PART_ANY);
-    lv_obj_set_style_text_color(table, lv_color_hex(0x000000), LV_PART_ANY);
-    
-    // 预填充表格行 - 直接在表格中显示端口名称
     for (int i = 0; i < MAX_PORTS; i++) {
-        lv_table_set_cell_value(table, i+1, 0, portInfos[i].name);
-        lv_table_set_cell_value(table, i+1, 1, "0.00");
-        lv_table_set_cell_value(table, i+1, 2, "0.00");
-        lv_table_set_cell_value(table, i+1, 3, "0.00");
-    }
-    
-    // 保存表格引用以便后续更新
-    ui_port_table = table;
-    
-    // 定义端口颜色 - 与图片相似的颜色
-    lv_color_t port_colors[MAX_PORTS] = {
-        lv_color_hex(0xFFD700), // A端口 - 金色
-        lv_color_hex(0xFFA500), // C1端口 - 橙色
-        lv_color_hex(0xFF8C00), // C2端口 - 深橙色
-        lv_color_hex(0xFF4500), // C3端口 - 红橙色
-        lv_color_hex(0xFF0000)  // C4端口 - 红色
-    };
-    
-    // 创建从左到右排列的5根功率条
-    int bar_width = 50;      // 每个条的宽度
-    int bar_height = 12;     // 条的高度
-    int bar_spacing = 10;    // 条之间的间距
-    int total_width = (bar_width + bar_spacing) * MAX_PORTS - bar_spacing; // 总宽度
-    
-    // 为每个端口创建水平功率条和标签
-    for (int i = 0; i < MAX_PORTS; i++) {
-        // 创建背景容器
-        lv_obj_t *bar_container = lv_obj_create(ui_screen);
-        lv_obj_remove_style_all(bar_container);  // 移除所有样式，使容器透明
-        lv_obj_set_size(bar_container, screen_width, 40);
-        lv_obj_set_pos(bar_container, 0, 35 + i * 20);  // 从上到下垂直排列
-        
         // 创建端口标签
-        ui_port_labels[i] = lv_label_create(bar_container);
+        ui_port_labels[i] = lv_label_create(power_container);
         lv_label_set_text(ui_port_labels[i], portInfos[i].name);
-        lv_obj_set_style_text_color(ui_port_labels[i], port_colors[i], LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(ui_port_labels[i], get_voltage_color(portInfos[i].voltage), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(ui_port_labels[i], &lv_font_montserrat_20, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_align(ui_port_labels[i], LV_ALIGN_LEFT_MID, 10, 0);
+        lv_obj_set_pos(ui_port_labels[i], 20, i * 65 + 10);
+        
+        // 创建电压、电流、功率标签
+        char info_text[64];
+        sprintf(info_text, "0.00V  0.00A  0.00W");
+        ui_power_values[i] = lv_label_create(power_container);
+        lv_label_set_text(ui_power_values[i], info_text);
+        lv_obj_set_style_text_color(ui_power_values[i], get_voltage_color(portInfos[i].voltage), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_font(ui_power_values[i], &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_pos(ui_power_values[i], 80, i * 65 + 12);
         
         // 创建功率条（彩色水平条）
-        ui_power_arcs[i] = lv_bar_create(bar_container);  // 使用bar替代arc
-        lv_obj_set_size(ui_power_arcs[i], 220, bar_height);  // 设置条的宽高
-        lv_obj_align(ui_power_arcs[i], LV_ALIGN_RIGHT_MID, -10, 0);  // 靠右对齐
+        ui_power_arcs[i] = lv_bar_create(power_container);
+        lv_obj_set_size(ui_power_arcs[i], 400, bar_height); // 减小宽度，避免与文字重叠
+        lv_obj_set_pos(ui_power_arcs[i], 300, i * 65 + 12);
         
         // 设置条的颜色
-        lv_obj_set_style_bg_color(ui_power_arcs[i], lv_color_hex(0xEEEEEE), LV_PART_MAIN);  // 背景色
-        lv_obj_set_style_bg_color(ui_power_arcs[i], port_colors[i], LV_PART_INDICATOR);     // 指示器颜色
+        lv_obj_set_style_bg_color(ui_power_arcs[i], lv_color_hex(0xCCCCCC), LV_PART_MAIN);  // 背景色使用深灰色
+        lv_obj_set_style_bg_color(ui_power_arcs[i], lv_color_hex(0x88FF00), LV_PART_INDICATOR);  // 指示器颜色使用绿黄色
+        
+        // 启用水平渐变
+        lv_obj_set_style_bg_grad_dir(ui_power_arcs[i], LV_GRAD_DIR_HOR, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+        
+        // 设置渐变终止颜色为橙色
+        lv_obj_set_style_bg_grad_color(ui_power_arcs[i], lv_color_hex(0xFF8800), LV_PART_INDICATOR | LV_STATE_DEFAULT);
         
         // 设置条的圆角
         lv_obj_set_style_radius(ui_power_arcs[i], bar_height/2, LV_PART_MAIN);
@@ -496,18 +491,14 @@ esp_err_t power_monitor_create_ui(void)
         // 设置初始值为0
         lv_bar_set_range(ui_power_arcs[i], 0, 100);
         lv_bar_set_value(ui_power_arcs[i], 0, LV_ANIM_OFF);
-        
-        // 创建功率值标签
-        ui_power_values[i] = lv_label_create(bar_container);
-        lv_label_set_text(ui_power_values[i], "0W");
-        lv_obj_set_style_text_color(ui_power_values[i], port_colors[i], LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_font(ui_power_values[i], &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);  // 中文字体
-        lv_obj_align_to(ui_power_values[i], ui_port_labels[i], LV_ALIGN_OUT_RIGHT_MID, 15, 0);
     }
     
     // 移除总功率标签和弧形
     ui_total_label = NULL;
     ui_total_arc = NULL;
+    
+    // 不再需要表格
+    ui_port_table = NULL;
     
     // 加载屏幕
     lv_scr_load(ui_screen);
@@ -551,6 +542,9 @@ void power_monitor_update_wifi_status(void)
         lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFF0000), LV_PART_MAIN | LV_STATE_DEFAULT);
         ESP_LOGW(TAG, "WiFi disconnected");
     }
+    
+    // 重新对齐，确保与设置按钮对齐
+    lv_obj_align_to(ui_wifi_status, ui_settings_btn, LV_ALIGN_OUT_LEFT_MID, -10, 0);
 }
 
 // 从网络获取数据
@@ -559,8 +553,8 @@ esp_err_t power_monitor_fetch_data(void)
     static esp_http_client_handle_t client = NULL;
     uint32_t current_time = esp_log_timestamp();
     
-    // 确保请求间隔大于REFRESH_INTERVAL
-    if (current_time - last_data_fetch_time < REFRESH_INTERVAL) {
+    // 确保请求间隔大于刷新间隔
+    if (current_time - last_data_fetch_time < local_refresh_interval) {
         return ESP_OK; // 间隔不够，跳过本次请求
     }
     
@@ -574,7 +568,7 @@ esp_err_t power_monitor_fetch_data(void)
     if (client == NULL) {
         // 创建HTTP客户端配置
         esp_http_client_config_t config = {
-            .url = DATA_URL,
+            .url = local_data_url,
             .event_handler = http_event_handler,
             .timeout_ms = 5000,  // 增加超时时间到5秒
             .buffer_size = 4096,
@@ -773,33 +767,13 @@ void power_monitor_parse_data(char* payload)
     power_monitor_update_ui();
 }
 
-// 获取基于电压的颜色 - 与原Power_Monitor.c保持一致的逻辑
-static lv_color_t get_voltage_color(int voltage_mv)
-{
-    if (voltage_mv > 21000) {                           // 21V以上
-        return lv_color_hex(0xFF00FF);                  // 紫色
-    } else if (voltage_mv > 16000 && voltage_mv <= 21000) { // 16V~21V
-        return lv_color_hex(0xFF0000);                  // 红色
-    } else if (voltage_mv > 13000 && voltage_mv <= 16000) { // 13V~16V
-        return lv_color_hex(0xFF8800);                  // 橙色
-    } else if (voltage_mv > 10000 && voltage_mv <= 13000) { // 10V~13V
-        return lv_color_hex(0xFFFF00);                  // 黄色
-    } else if (voltage_mv > 6000 && voltage_mv <= 10000) {  // 6V~10V
-        return lv_color_hex(0x00FF00);                  // 绿色
-    } else if (voltage_mv >= 0 && voltage_mv <= 6000) {     // 0V~6V
-        return lv_color_hex(0x000000);                  // 黑色（白底黑字）
-    } else {
-        return lv_color_hex(0x888888);                  // 灰色（未识别电压）
-    }
-}
-
 // 更新UI
 void power_monitor_update_ui(void)
 {
     // 定义临时字符串缓冲区
     char text_buf[64];
     
-    // 更新表格数据
+    // 更新端口数据
     for (int i = 0; i < MAX_PORTS; i++) {
         // 计算并格式化值
         float power_w = portInfos[i].power;
@@ -809,20 +783,13 @@ void power_monitor_update_ui(void)
         // 根据电压确定颜色
         lv_color_t color = get_voltage_color(portInfos[i].voltage);
         
-        // 格式化字符串
-        sprintf(text_buf, "%.2f", power_w);
-        lv_table_set_cell_value(ui_port_table, i+1, 1, text_buf);
+        // 更新端口标签颜色
+        lv_obj_set_style_text_color(ui_port_labels[i], color, LV_PART_MAIN | LV_STATE_DEFAULT);
         
-        sprintf(text_buf, "%.2f", voltage_v);
-        lv_table_set_cell_value(ui_port_table, i+1, 2, text_buf);
-        
-        sprintf(text_buf, "%.2f", current_a);
-        lv_table_set_cell_value(ui_port_table, i+1, 3, text_buf);
-        
-        // 为每行设置颜色 - 修复每次只影响一行的bug
-        for (int row = 1; row <= MAX_PORTS; row++) {
-            lv_obj_set_style_text_color(ui_port_table, get_voltage_color(portInfos[row-1].voltage), LV_PART_ITEMS);
-        }
+        // 格式化并更新信息文本
+        sprintf(text_buf, "%.2fV  %.2fA  %.2fW", voltage_v, current_a, power_w);
+        lv_label_set_text(ui_power_values[i], text_buf);
+        lv_obj_set_style_text_color(ui_power_values[i], color, LV_PART_MAIN | LV_STATE_DEFAULT);
         
         // 更新功率条的值（最大功率的百分比）
         int percent = (int)((portInfos[i].power / MAX_PORT_WATTS) * 100);
@@ -837,10 +804,6 @@ void power_monitor_update_ui(void)
         
         // 设置功率条的值
         lv_bar_set_value(ui_power_arcs[i], percent, LV_ANIM_OFF);
-        
-        // 更新功率值标签 - 确保文本不会消失
-        sprintf(text_buf, "%.1fW", power_w);
-        lv_label_set_text(ui_power_values[i], text_buf);
         
         // 确保端口标签文本不变
         lv_label_set_text(ui_port_labels[i], portInfos[i].name);
