@@ -387,7 +387,7 @@ static lv_color_t get_voltage_color(int voltage_mv)
     } else if (voltage_mv > 13000 && voltage_mv <= 16000) { // 13V~16V
         return lv_color_hex(0xFF8800);                  // 橙色
     } else if (voltage_mv > 10000 && voltage_mv <= 13000) { // 10V~13V
-        return lv_color_hex(0xFFFF00);                  // 黄色
+        return lv_color_hex(0x88FF00);                  // 黄色
     } else if (voltage_mv > 6000 && voltage_mv <= 10000) {  // 6V~10V
         return lv_color_hex(0x00FF00);                  // 绿色
     } else if (voltage_mv >= 0 && voltage_mv <= 6000) {     // 0V~6V
@@ -807,6 +807,54 @@ void power_monitor_update_ui(void)
         
         // 确保端口标签文本不变
         lv_label_set_text(ui_port_labels[i], portInfos[i].name);
+    }
+}
+
+// 暂停主程序定时器
+void pause_main_timer(void)
+{
+    ESP_LOGI(TAG, "暂停主程序定时器");
+    
+    // 暂停数据刷新定时器
+    if (refresh_timer != NULL) {
+        lv_timer_pause(refresh_timer);
+        ESP_LOGI(TAG, "数据刷新定时器已暂停");
+    }
+    
+    // 暂停WiFi状态监测定时器
+    if (wifi_timer != NULL) {
+        lv_timer_pause(wifi_timer);
+        ESP_LOGI(TAG, "WiFi状态定时器已暂停");
+    }
+    
+    // 暂停WiFi闪烁定时器
+    if (wifi_blink_timer != NULL) {
+        lv_timer_pause(wifi_blink_timer);
+        ESP_LOGI(TAG, "WiFi闪烁定时器已暂停");
+    }
+}
+
+// 恢复主程序定时器
+void resume_main_timer(void)
+{
+    ESP_LOGI(TAG, "恢复主程序定时器");
+    
+    // 恢复数据刷新定时器
+    if (refresh_timer != NULL) {
+        lv_timer_resume(refresh_timer);
+        ESP_LOGI(TAG, "数据刷新定时器已恢复");
+    }
+    
+    // 恢复WiFi状态监测定时器
+    if (wifi_timer != NULL) {
+        lv_timer_resume(wifi_timer);
+        ESP_LOGI(TAG, "WiFi状态定时器已恢复");
+    }
+    
+    // 恢复WiFi闪烁定时器
+    if (wifi_blink_timer != NULL) {
+        lv_timer_resume(wifi_blink_timer);
+        ESP_LOGI(TAG, "WiFi闪烁定时器已恢复");
     }
 }
 
