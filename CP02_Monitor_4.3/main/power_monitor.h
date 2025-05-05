@@ -75,6 +75,9 @@ bool power_monitor_has_error(void);
 // 添加设置界面回调
 void power_monitor_on_settings_change(void);
 
+// 获取主屏幕对象引用，供其他模块访问
+lv_obj_t *get_main_screen(void);
+
 #ifdef __cplusplus
 }
 #endif

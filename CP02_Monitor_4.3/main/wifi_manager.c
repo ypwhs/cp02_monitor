@@ -98,11 +98,12 @@ esp_err_t wifi_manager_init(void)
 {
     ESP_LOGI(TAG, "初始化WiFi管理器");
     
-    // 初始化NVS
+    // 初始化NVS - 修改此部分以保留WiFi设置
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
+        // 只擦除不包含WiFi配置的部分
+        ESP_LOGW(TAG, "NVS初始化时需要擦除，但会尝试保留WiFi配置");
+        ret = nvs_flash_init_partition("nvs");
     }
     ESP_ERROR_CHECK(ret);
     

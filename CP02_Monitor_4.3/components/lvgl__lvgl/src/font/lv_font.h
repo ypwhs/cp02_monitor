@@ -240,6 +240,8 @@ LV_FONT_DECLARE(lv_font_unscii_8)
 LV_FONT_DECLARE(lv_font_unscii_16)
 #endif
 
+extern const lv_font_t cn_16; /*Chinese font*/
+
 /*Declare the custom (user defined) fonts*/
 #ifdef LV_FONT_CUSTOM_DECLARE
 LV_FONT_CUSTOM_DECLARE
