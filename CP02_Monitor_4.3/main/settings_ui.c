@@ -365,6 +365,13 @@ static void input_focused_cb(lv_event_t *e)
     lv_obj_clear_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
     lv_obj_align(ui_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     
+    // 如果是小电拼IP输入框，直接应用固定偏移
+    if (textarea == ui_device_ip_input) {
+        // 针对小电拼IP输入框使用固定偏移
+        lv_obj_set_y(ui_settings_screen, -180); // 使用固定的偏移值
+        return;
+    }
+    
     // 获取键盘高度
     lv_coord_t kb_height = lv_obj_get_height(ui_keyboard);
     
@@ -382,7 +389,7 @@ static void input_focused_cb(lv_event_t *e)
     // 如果输入框会被键盘遮挡，则调整设置面板的位置
     if (textarea_bottom > kb_top) {
         // 计算需要上移的距离
-        lv_coord_t offset = textarea_bottom - kb_top + 40; // 额外加20像素的间距
+        lv_coord_t offset = textarea_bottom - kb_top + 40; // 额外加40像素的间距
         
         // 调整整个设置屏幕的位置
         lv_obj_set_y(ui_settings_screen, -offset);
