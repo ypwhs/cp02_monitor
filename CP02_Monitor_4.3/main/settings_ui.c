@@ -170,7 +170,11 @@ void settings_ui_create(void)
         lv_textarea_set_text(ui_ssid_input, config.ssid);
         lv_textarea_set_text(ui_password_input, config.password);
         lv_textarea_set_text(ui_ip_input, config.device_ip);
-        lv_obj_set_state(ui_auto_connect_cb, config.auto_connect ? LV_STATE_CHECKED : LV_STATE_DEFAULT);
+        if (config.auto_connect) {
+            lv_obj_add_state(ui_auto_connect_cb, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(ui_auto_connect_cb, LV_STATE_CHECKED);
+        }
     }
 }
 
@@ -322,7 +326,11 @@ void settings_ui_open_wifi_settings(void)
     if (wifi_manager_get_config(&config) == ESP_OK) {
         lv_textarea_set_text(ui_ssid_input, config.ssid);
         lv_textarea_set_text(ui_password_input, config.password);
-        lv_obj_set_state(ui_auto_connect_cb, config.auto_connect ? LV_STATE_CHECKED : LV_STATE_DEFAULT);
+        if (config.auto_connect) {
+            lv_obj_add_state(ui_auto_connect_cb, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(ui_auto_connect_cb, LV_STATE_CHECKED);
+        }
     }
     
     // 加载设置页面
