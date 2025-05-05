@@ -21,7 +21,7 @@ static const char *TAG = "POWER_MONITOR";
 // 常量
 static float MAX_POWER_WATTS = DEFAULT_MAX_POWER_WATTS;    // 最大总功率
 static float MAX_PORT_WATTS = DEFAULT_MAX_PORT_WATTS;      // 每个端口最大功率
-static char DATA_URL[128] = "http://192.168.1.100/metrics"; // API URL
+static char DATA_URL[128] = "http://192.168.1.19/metrics"; // API URL
 static int REFRESH_INTERVAL = DEFAULT_REFRESH_INTERVAL;    // 刷新间隔 (ms)
 
 // 全局变量
