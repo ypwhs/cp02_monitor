@@ -364,12 +364,38 @@ static void input_focused_cb(lv_event_t *e)
     lv_obj_set_parent(ui_keyboard, lv_scr_act());
     lv_obj_clear_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
     lv_obj_align(ui_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+    
+    // 获取键盘高度
+    lv_coord_t kb_height = lv_obj_get_height(ui_keyboard);
+    
+    // 获取textarea的位置和大小
+    lv_coord_t textarea_y = textarea->coords.y1;
+    lv_coord_t textarea_height = lv_obj_get_height(textarea);
+    lv_coord_t screen_height = lv_disp_get_ver_res(lv_disp_get_default());
+    
+    // 计算textarea的底部位置
+    lv_coord_t textarea_bottom = textarea_y + textarea_height;
+    
+    // 计算键盘的顶部位置
+    lv_coord_t kb_top = screen_height - kb_height;
+    
+    // 如果输入框会被键盘遮挡，则调整设置面板的位置
+    if (textarea_bottom > kb_top) {
+        // 计算需要上移的距离
+        lv_coord_t offset = textarea_bottom - kb_top + 40; // 额外加20像素的间距
+        
+        // 调整整个设置屏幕的位置
+        lv_obj_set_y(ui_settings_screen, -offset);
+    }
 }
 
 // 键盘ready回调 - 用于处理键盘OK和Cancel按钮
 static void keyboard_ready_cb(lv_event_t *e)
 {
     lv_obj_add_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
+    
+    // 恢复设置屏幕的位置
+    lv_obj_set_y(ui_settings_screen, 0);
 }
 
 // 连接WiFi按钮回调
@@ -412,6 +438,8 @@ static void wifi_connect_btn_event_cb(lv_event_t *e)
     
     // 隐藏键盘
     lv_obj_add_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
+    // 恢复设置屏幕的位置
+    lv_obj_set_y(ui_settings_screen, 0);
     
     // 创建超时定时器
     if (wifi_timeout_timer != NULL) {
@@ -431,6 +459,13 @@ static void settings_save_btn_event_cb(lv_event_t *e)
     
     // 获取输入的值
     const char *metrics_ip = lv_textarea_get_text(ui_device_ip_input);
+    
+    // 隐藏键盘如果可见
+    if (!lv_obj_has_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_add_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
+        // 恢复设置屏幕的位置
+        lv_obj_set_y(ui_settings_screen, 0);
+    }
     
     // 保存小电拼IP设置（通过更新数据URL）
     char url[128];
@@ -467,6 +502,8 @@ static void settings_return_btn_event_cb(lv_event_t *e)
     
     // 隐藏键盘
     lv_obj_add_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
+    // 恢复设置屏幕的位置
+    lv_obj_set_y(ui_settings_screen, 0);
     
     // 获取主屏幕并加载
     lv_obj_t *main_screen = get_main_screen();
@@ -513,6 +550,9 @@ void settings_ui_open_wifi_settings(void)
         }
     }
     
+    // 确保设置屏幕位置正确
+    lv_obj_set_y(ui_settings_screen, 0);
+    
     // 加载设置页面
     lv_scr_load(ui_settings_screen);
     
@@ -533,6 +573,9 @@ void settings_ui_close_wifi_settings(void)
     
     // 隐藏键盘
     lv_obj_add_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
+    
+    // 确保设置屏幕位置正确
+    lv_obj_set_y(ui_settings_screen, 0);
     
     // 获取主屏幕并加载
     lv_obj_t *main_screen = get_main_screen();
