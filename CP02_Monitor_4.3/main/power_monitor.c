@@ -114,14 +114,14 @@ esp_err_t power_monitor_init(void)
     // 创建电源监控UI
     power_monitor_create_ui();
     
-    // 启动动画
+    // 启动动画 - 缩短动画间隔为5ms，加快启动速度
     startup_anim_progress = 0;
-    startup_anim_timer = lv_timer_create(startup_animation_cb, 20, NULL);
+    startup_anim_timer = lv_timer_create(startup_animation_cb, 5, NULL);
     
-    // 创建WiFi状态监控定时器 - 它会在WiFi连接后启动数据刷新定时器
+    // 创建WiFi状态监控定时器 - 它会在启动动画完成后启动数据刷新定时器
     wifi_timer = lv_timer_create(wifi_status_timer_cb, 1000, NULL);
     
-    ESP_LOGI(TAG, "电源监控模块已初始化，等待WiFi连接");
+    ESP_LOGI(TAG, "电源监控模块已初始化");
     
     return ESP_OK;
 }
@@ -131,10 +131,19 @@ static void wifi_status_timer_cb(lv_timer_t *timer)
 {
     power_monitor_update_wifi_status();
     
-    // 如果WiFi连接成功且已获取IP地址，并且启动动画已完成，且刷新定时器还未创建，则创建刷新定时器
-    if (WIFI_Connection && WIFI_GotIP && startup_animation_completed && refresh_timer == NULL) {
-        ESP_LOGI(TAG, "WiFi已连接并获取IP，开始监控电源数据");
-        ESP_LOGI(TAG, "从URL获取数据: %s", local_data_url);
+    // 如果启动动画已完成且刷新定时器还未创建，则创建刷新定时器
+    // 无论WiFi是否连接，都创建定时器立即显示界面
+    if (startup_animation_completed && refresh_timer == NULL) {
+        ESP_LOGI(TAG, "启动动画已完成，开始显示界面");
+        
+        // 如果WiFi已连接并获取IP，则显示正常的日志信息
+        if (WIFI_Connection && WIFI_GotIP) {
+            ESP_LOGI(TAG, "WiFi已连接并获取IP，开始监控电源数据");
+            ESP_LOGI(TAG, "从URL获取数据: %s", local_data_url);
+        } else {
+            ESP_LOGI(TAG, "WiFi未连接或未获取IP，界面将显示但无数据更新");
+        }
+        
         refresh_timer = lv_timer_create(power_monitor_timer_callback, local_refresh_interval, NULL);
         ESP_LOGI(TAG, "刷新定时器已创建，间隔: %d ms", local_refresh_interval);
     }
@@ -144,7 +153,7 @@ static void wifi_status_timer_cb(lv_timer_t *timer)
 static void startup_animation_cb(lv_timer_t *timer)
 {
     // 更新进度值
-    startup_anim_progress += 5;
+    startup_anim_progress += 20;
     
     // 为所有进度弧设置进度
     for (int i = 0; i < MAX_PORTS; i++) {
@@ -558,9 +567,8 @@ esp_err_t power_monitor_fetch_data(void)
         return ESP_OK; // 间隔不够，跳过本次请求
     }
     
-    // 如果WiFi未连接或未获取IP地址，则不尝试获取数据
+    // 如果WiFi未连接或未获取IP地址，则不尝试获取数据，但不记录警告
     if (!WIFI_Connection || !WIFI_GotIP) {
-        ESP_LOGW(TAG, "WiFi未连接或未获取IP，跳过数据获取");
         return ESP_ERR_WIFI_NOT_CONNECT;
     }
     

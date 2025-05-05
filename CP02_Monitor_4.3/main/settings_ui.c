@@ -38,14 +38,13 @@ extern lv_obj_t *get_main_screen(void);
 extern void pause_main_timer(void);
 extern void resume_main_timer(void);
 
-// 添加WiFi连接状态回调声明和全局变量
+// 添加WiFi状态回调声明和全局变量
 static lv_obj_t *wifi_status_mbox = NULL;
 static lv_timer_t *wifi_timeout_timer = NULL;
 
 // 函数前向声明
 static void update_wifi_status_display(const char *title, const char *msg);
-static void wifi_status_connected_cb(lv_timer_t *timer);
-static void wifi_status_ip_cb(lv_timer_t *timer);
+static void wifi_status_callback(wifi_status_t status);
 
 // 定义一个回调函数用于定时器
 static void wifi_connect_timer_cb(lv_timer_t *timer)
@@ -91,40 +90,66 @@ static void update_wifi_status_display(const char *title, const char *msg)
     lv_obj_center(wifi_status_mbox);
 }
 
-// WiFi连接完成回调
-static void wifi_status_connected_cb(lv_timer_t *timer)
+// WiFi状态回调 - 真实处理WiFi事件
+static void wifi_status_callback(wifi_status_t status)
 {
-    // 连接成功，显示成功消息
-    update_wifi_status_display("成功", "已成功连接WiFi");
+    ESP_LOGI(TAG, "WiFi状态更新: %d", status);
     
-    // 取消超时定时器
-    if (wifi_timeout_timer != NULL) {
-        lv_timer_del(wifi_timeout_timer);
-        wifi_timeout_timer = NULL;
+    switch (status) {
+        case WIFI_STATUS_CONNECTING:
+            update_wifi_status_display("提示", "正在连接WiFi...");
+            break;
+            
+        case WIFI_STATUS_CONNECTED:
+            update_wifi_status_display("提示", "WiFi已连接，正在获取IP...");
+            break;
+            
+        case WIFI_STATUS_GOT_IP:
+            // 取消超时定时器
+            if (wifi_timeout_timer != NULL) {
+                lv_timer_del(wifi_timeout_timer);
+                wifi_timeout_timer = NULL;
+            }
+            
+            // 获取当前IP显示在界面上
+            wifi_user_config_t config;
+            if (wifi_manager_get_config(&config) == ESP_OK) {
+                lv_label_set_text(ui_device_ip_label, config.device_ip);
+            }
+            
+            update_wifi_status_display("成功", "WiFi连接成功");
+            
+            // 2秒后关闭成功消息
+            lv_timer_t *close_timer = lv_timer_create(wifi_connect_timer_cb, 2000, NULL);
+            lv_timer_set_repeat_count(close_timer, 1);
+            break;
+            
+        case WIFI_STATUS_DISCONNECTED:
+            update_wifi_status_display("提示", "WiFi已断开连接");
+            break;
+            
+        case WIFI_STATUS_CONNECT_FAILED:
+            // 取消超时定时器
+            if (wifi_timeout_timer != NULL) {
+                lv_timer_del(wifi_timeout_timer);
+                wifi_timeout_timer = NULL;
+            }
+            
+            update_wifi_status_display("错误", "WiFi连接失败，请检查设置");
+            break;
+            
+        default:
+            break;
     }
-    
-    // 2秒后关闭成功消息
-    lv_timer_t *close_timer = lv_timer_create(wifi_connect_timer_cb, 2000, NULL);
-    lv_timer_set_repeat_count(close_timer, 1);
-    
-    lv_timer_del(timer);
-}
-
-// 获取设备IP阶段回调
-static void wifi_status_ip_cb(lv_timer_t *timer)
-{
-    update_wifi_status_display("提示", "正在获取设备IP...");
-    lv_timer_del(timer);
-    
-    // 创建连接成功定时器
-    lv_timer_t *status_timer2 = lv_timer_create(wifi_status_connected_cb, 3000, NULL);
-    lv_timer_set_repeat_count(status_timer2, 1);
 }
 
 // 初始化设置UI
 void settings_ui_init(void)
 {
     ESP_LOGI(TAG, "初始化设置UI");
+    
+    // 注册WiFi状态回调
+    wifi_manager_register_cb(wifi_status_callback);
     
     // 预先创建设置页面，但不显示
     settings_ui_create();
@@ -388,22 +413,15 @@ static void wifi_connect_btn_event_cb(lv_event_t *e)
     // 隐藏键盘
     lv_obj_add_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
     
-    // 显示"正在连接WiFi"状态
-    update_wifi_status_display("提示", "正在连接WiFi...");
-    
-    // 创建超时定时器 - 10秒后触发超时
+    // 创建超时定时器
     if (wifi_timeout_timer != NULL) {
         lv_timer_del(wifi_timeout_timer);
     }
     wifi_timeout_timer = lv_timer_create(wifi_connect_timeout_cb, 10000, NULL);
     lv_timer_set_repeat_count(wifi_timeout_timer, 1);
     
-    // 自动连接WiFi
+    // 连接WiFi - 状态更新将通过回调函数处理
     wifi_manager_connect();
-    
-    // 模拟WiFi连接过程状态变化（实际项目中应通过WiFi状态回调实现）
-    lv_timer_t *status_timer1 = lv_timer_create(wifi_status_ip_cb, 2000, NULL);
-    lv_timer_set_repeat_count(status_timer1, 1);
 }
 
 // 设置保存按钮回调
@@ -474,7 +492,15 @@ void settings_ui_open_wifi_settings(void)
         lv_textarea_set_text(ui_ssid_input, config.ssid);
         lv_textarea_set_text(ui_password_input, ""); // 不显示密码，即使配置中有密码
         lv_textarea_set_placeholder_text(ui_password_input, "输入密码");
-        lv_label_set_text(ui_device_ip_label, config.device_ip);
+        
+        // 获取当前实际IP而不是存储的IP
+        char ip[16] = "0.0.0.0";
+        if (wifi_manager_is_connected()) {
+            wifi_manager_get_ip(ip, sizeof(ip));
+            lv_label_set_text(ui_device_ip_label, ip);
+        } else {
+            lv_label_set_text(ui_device_ip_label, "未连接");
+        }
         
         // 设置小电拼IP
         const char* metrics_url = power_monitor_get_data_url();
