@@ -23,13 +23,13 @@ extern "C" {
 #define MAX_PASS_LEN 64
 #define MAX_IP_LEN   16
 
-// WiFi配置结构体
+// WiFi配置结构体 - 重命名为wifi_user_config_t避免冲突
 typedef struct {
     char ssid[MAX_SSID_LEN + 1];
     char password[MAX_PASS_LEN + 1];
     char device_ip[MAX_IP_LEN + 1]; // 小电拼设备IP
     bool auto_connect;
-} wifi_config_t;
+} wifi_user_config_t;
 
 // WiFi状态
 typedef enum {
@@ -50,16 +50,16 @@ esp_err_t wifi_manager_connect(void);
 esp_err_t wifi_manager_disconnect(void);
 
 // 保存WiFi配置
-esp_err_t wifi_manager_save_config(wifi_config_t *config);
+esp_err_t wifi_manager_save_config(wifi_user_config_t *config);
 
 // 加载WiFi配置
-esp_err_t wifi_manager_load_config(wifi_config_t *config);
+esp_err_t wifi_manager_load_config(wifi_user_config_t *config);
 
 // 设置WiFi配置
-esp_err_t wifi_manager_set_config(wifi_config_t *config);
+esp_err_t wifi_manager_set_config(wifi_user_config_t *config);
 
 // 获取WiFi配置
-esp_err_t wifi_manager_get_config(wifi_config_t *config);
+esp_err_t wifi_manager_get_config(wifi_user_config_t *config);
 
 // 获取当前WiFi状态
 wifi_status_t wifi_manager_get_status(void);

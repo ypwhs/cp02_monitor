@@ -61,6 +61,7 @@ static void startup_animation_cb(lv_timer_t *timer);
 static void wifi_blink_timer_cb(lv_timer_t *timer);
 static esp_err_t http_event_handler(esp_http_client_event_t *evt);
 static void power_monitor_timer_callback(lv_timer_t *timer);
+static void settings_btn_event_cb(lv_event_t *e);
 
 // 设置回调函数
 static settings_change_cb_t settings_change_callback = NULL;
@@ -359,7 +360,7 @@ void power_monitor_on_settings_change(void)
     // 可以在这里添加任何设置更改后的处理逻辑
     
     // 如果有需要更新数据URL，可以在这里获取新的IP地址
-    wifi_config_t config;
+    wifi_user_config_t config;
     if (wifi_manager_get_config(&config) == ESP_OK) {
         char url[128];
         snprintf(url, sizeof(url), "http://%s/metrics", config.device_ip);

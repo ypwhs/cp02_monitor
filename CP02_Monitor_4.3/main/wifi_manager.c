@@ -28,7 +28,7 @@ static const char *TAG = "WIFI_MANAGER";
 // 全局变量
 bool WIFI_Connection = false;
 bool WIFI_GotIP = false;
-static wifi_config_t current_config = {0};
+static wifi_user_config_t current_config = {0};
 static EventGroupHandle_t wifi_event_group = NULL;
 static wifi_status_cb_t status_callback = NULL;
 static wifi_status_t current_status = WIFI_STATUS_DISCONNECTED;
@@ -212,7 +212,7 @@ esp_err_t wifi_manager_disconnect(void)
 }
 
 // 保存WiFi配置
-esp_err_t wifi_manager_save_config(wifi_config_t *config)
+esp_err_t wifi_manager_save_config(wifi_user_config_t *config)
 {
     ESP_LOGI(TAG, "保存WiFi配置");
     
@@ -230,7 +230,7 @@ esp_err_t wifi_manager_save_config(wifi_config_t *config)
     }
     
     // 保存配置
-    err = nvs_set_blob(nvs_handle, WIFI_NVS_KEY, config, sizeof(wifi_config_t));
+    err = nvs_set_blob(nvs_handle, WIFI_NVS_KEY, config, sizeof(wifi_user_config_t));
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "保存WiFi配置失败: %s", esp_err_to_name(err));
         nvs_close(nvs_handle);
@@ -250,7 +250,7 @@ esp_err_t wifi_manager_save_config(wifi_config_t *config)
 }
 
 // 加载WiFi配置
-esp_err_t wifi_manager_load_config(wifi_config_t *config)
+esp_err_t wifi_manager_load_config(wifi_user_config_t *config)
 {
     ESP_LOGI(TAG, "加载WiFi配置");
     
@@ -268,7 +268,7 @@ esp_err_t wifi_manager_load_config(wifi_config_t *config)
     }
     
     // 获取数据大小
-    size_t size = sizeof(wifi_config_t);
+    size_t size = sizeof(wifi_user_config_t);
     err = nvs_get_blob(nvs_handle, WIFI_NVS_KEY, config, &size);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "加载WiFi配置失败: %s", esp_err_to_name(err));
@@ -281,7 +281,7 @@ esp_err_t wifi_manager_load_config(wifi_config_t *config)
 }
 
 // 设置WiFi配置
-esp_err_t wifi_manager_set_config(wifi_config_t *config)
+esp_err_t wifi_manager_set_config(wifi_user_config_t *config)
 {
     ESP_LOGI(TAG, "设置WiFi配置: SSID=%s, Auto=%d", config->ssid, config->auto_connect);
     
@@ -291,7 +291,7 @@ esp_err_t wifi_manager_set_config(wifi_config_t *config)
     }
     
     // 保存配置
-    memcpy(&current_config, config, sizeof(wifi_config_t));
+    memcpy(&current_config, config, sizeof(wifi_user_config_t));
     
     // 保存到NVS
     esp_err_t err = wifi_manager_save_config(&current_config);
@@ -300,7 +300,7 @@ esp_err_t wifi_manager_set_config(wifi_config_t *config)
 }
 
 // 获取WiFi配置
-esp_err_t wifi_manager_get_config(wifi_config_t *config)
+esp_err_t wifi_manager_get_config(wifi_user_config_t *config)
 {
     // 检查参数
     if (config == NULL) {
@@ -308,7 +308,7 @@ esp_err_t wifi_manager_get_config(wifi_config_t *config)
     }
     
     // 复制当前配置
-    memcpy(config, &current_config, sizeof(wifi_config_t));
+    memcpy(config, &current_config, sizeof(wifi_user_config_t));
     
     return ESP_OK;
 }

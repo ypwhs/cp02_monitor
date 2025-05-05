@@ -165,7 +165,7 @@ void settings_ui_create(void)
     lv_obj_add_flag(ui_keyboard, LV_OBJ_FLAG_HIDDEN);
     
     // 加载当前的WiFi设置
-    wifi_config_t config;
+    wifi_user_config_t config;
     if (wifi_manager_get_config(&config) == ESP_OK) {
         lv_textarea_set_text(ui_ssid_input, config.ssid);
         lv_textarea_set_text(ui_password_input, config.password);
@@ -203,7 +203,7 @@ static void wifi_save_btn_event_cb(lv_event_t *e)
     }
     
     // 创建配置
-    wifi_config_t config;
+    wifi_user_config_t config;
     wifi_manager_get_config(&config); // 获取当前配置
     
     // 更新设置
@@ -267,7 +267,7 @@ static void ip_save_btn_event_cb(lv_event_t *e)
     }
     
     // 创建配置
-    wifi_config_t config;
+    wifi_user_config_t config;
     wifi_manager_get_config(&config); // 获取当前配置
     
     // 更新设置
@@ -318,7 +318,7 @@ void settings_ui_open_wifi_settings(void)
     ESP_LOGI(TAG, "打开WiFi设置页面");
     
     // 加载当前的WiFi设置
-    wifi_config_t config;
+    wifi_user_config_t config;
     if (wifi_manager_get_config(&config) == ESP_OK) {
         lv_textarea_set_text(ui_ssid_input, config.ssid);
         lv_textarea_set_text(ui_password_input, config.password);
@@ -344,7 +344,7 @@ void settings_ui_open_ip_settings(void)
     ESP_LOGI(TAG, "打开IP设置页面");
     
     // 加载当前的IP设置
-    wifi_config_t config;
+    wifi_user_config_t config;
     if (wifi_manager_get_config(&config) == ESP_OK) {
         lv_textarea_set_text(ui_ip_input, config.device_ip);
     }
