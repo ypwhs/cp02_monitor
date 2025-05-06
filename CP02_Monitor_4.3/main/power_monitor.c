@@ -238,12 +238,17 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
             }
             output_buffer = NULL;
             output_len = 0;
+            
+            // 连接成功后添加短暂延迟
+            vTaskDelay(1 / portTICK_PERIOD_MS);
             break;
             
         case HTTP_EVENT_HEADER_SENT:
             break;
             
         case HTTP_EVENT_ON_HEADER:
+            // 处理头部时让出CPU时间
+            vTaskDelay(1 / portTICK_PERIOD_MS);
             break;
             
         case HTTP_EVENT_ON_DATA:
@@ -272,12 +277,21 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
                 // 复制数据到缓冲区
                 memcpy(output_buffer + output_len, evt->data, evt->data_len);
                 output_len += evt->data_len;
+                
+                // 收到大量数据时让出CPU时间
+                if (evt->data_len > 1024) {
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                }
             }
             break;
             
         case HTTP_EVENT_ON_FINISH:
             if (output_buffer != NULL && output_len > 0) {
                 output_buffer[output_len] = '\0';
+                
+                // 解析数据前添加短暂延迟
+                vTaskDelay(1 / portTICK_PERIOD_MS);
+                
                 power_monitor_parse_data(output_buffer);
                 free(output_buffer);
             } else {
@@ -292,6 +306,10 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
                 // 如果断开连接时已经收到数据，尝试处理
                 if (output_len > 0) {
                     output_buffer[output_len] = '\0';
+                    
+                    // 在断开连接后处理数据前添加短暂延迟
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    
                     power_monitor_parse_data(output_buffer);
                 }
                 free(output_buffer);
@@ -594,10 +612,16 @@ esp_err_t power_monitor_fetch_data(void)
         esp_http_client_set_method(client, HTTP_METHOD_GET);
         esp_http_client_set_header(client, "Accept", "text/plain");
         esp_http_client_set_header(client, "User-Agent", "ESP32-HTTP-Client");
+        
+        // 初始化HTTP客户端可能耗时，添加短暂延迟
+        vTaskDelay(1 / portTICK_PERIOD_MS);
     }
     
     // 记录请求开始时间
     last_data_fetch_time = current_time;
+    
+    // 在HTTP请求前添加短暂延迟，让UI任务有时间处理事件
+    vTaskDelay(1 / portTICK_PERIOD_MS);
     
     // 执行HTTP请求
     esp_err_t err = esp_http_client_perform(client);
@@ -657,11 +681,19 @@ void power_monitor_parse_data(char* payload)
     // 重置总功率
     totalPower = 0.0f;
     
+    // 让出CPU时间，避免长时间解析数据导致UI卡顿
+    vTaskDelay(1 / portTICK_PERIOD_MS);
+    
     // 逐行解析数据
     char* line = strtok(payload, "\n");
     int lineCount = 0;
     while (line != NULL) {
         lineCount++;
+        
+        // 每解析10行数据，让出一次CPU时间
+        if (lineCount % 10 == 0) {
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+        }
         
         // 解析电流数据
         if (strncmp(line, "ionbridge_port_current{id=", 26) == 0) {
@@ -755,6 +787,9 @@ void power_monitor_parse_data(char* payload)
         line = strtok(NULL, "\n");
     }
     
+    // 再次让出CPU时间，避免计算功率导致UI卡顿
+    vTaskDelay(1 / portTICK_PERIOD_MS);
+    
     // 计算每个端口的功率
     for (int i = 0; i < MAX_PORTS; i++) {
         // 功率 = 电流(mA) * 电压(mV) / 1000000 (转换为W)
@@ -771,6 +806,9 @@ void power_monitor_parse_data(char* payload)
              portInfos[4].power, portInfos[4].current, portInfos[4].voltage,
              totalPower);
     
+    // 更新UI前添加短暂延迟
+    vTaskDelay(1 / portTICK_PERIOD_MS);
+    
     // 更新UI
     power_monitor_update_ui();
 }
@@ -780,6 +818,9 @@ void power_monitor_update_ui(void)
 {
     // 定义临时字符串缓冲区
     char text_buf[64];
+    
+    // 在开始更新UI前添加短暂延迟
+    vTaskDelay(1 / portTICK_PERIOD_MS);
     
     // 更新端口数据
     for (int i = 0; i < MAX_PORTS; i++) {
@@ -815,7 +856,13 @@ void power_monitor_update_ui(void)
         
         // 确保端口标签文本不变
         lv_label_set_text(ui_port_labels[i], portInfos[i].name);
+        
+        // 每更新一个端口后添加短暂延迟
+        vTaskDelay(1 / portTICK_PERIOD_MS);
     }
+    
+    // UI更新完成后添加短暂延迟
+    vTaskDelay(1 / portTICK_PERIOD_MS);
 }
 
 // 暂停主程序定时器
