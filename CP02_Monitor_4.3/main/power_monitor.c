@@ -515,8 +515,8 @@ esp_err_t power_monitor_create_ui(void)
         ui_port_labels[i] = lv_label_create(power_container);
         lv_label_set_text(ui_port_labels[i], portInfos[i].name);
         lv_obj_set_style_text_color(ui_port_labels[i], get_voltage_color(portInfos[i].voltage), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_font(ui_port_labels[i], &lv_font_montserrat_20, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_pos(ui_port_labels[i], 20, i * port_spacing + 10);
+        lv_obj_set_style_text_font(ui_port_labels[i], &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_pos(ui_port_labels[i], 20, i * port_spacing + 12);
         
         // 创建电压、电流、功率标签 - 给文字增加宽度
         char info_text[64];
@@ -556,7 +556,7 @@ esp_err_t power_monitor_create_ui(void)
     lv_label_set_text(ui_total_label, "总功率"); // 仅显示"总功率"，不显示数值
     lv_obj_set_style_text_color(ui_total_label, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_total_label, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT); // 与端口标签一致
-    lv_obj_set_pos(ui_total_label, 20, MAX_PORTS * port_spacing + 10);
+    lv_obj_set_pos(ui_total_label, 20, MAX_PORTS * port_spacing + 12);
     
     // 创建总功率信息标签 - 与单端口电压电流功率标签风格一致
     lv_obj_t *ui_total_power_value = lv_label_create(power_container);
