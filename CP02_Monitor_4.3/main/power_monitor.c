@@ -424,6 +424,36 @@ static lv_color_t get_voltage_color(int voltage_mv)
     }
 }
 
+// 根据协议ID获取协议名称
+static const char* get_fc_protocol_name(uint8_t protocol)
+{
+    switch (protocol) {
+        case 0:  return "None";
+        case 1:  return "QC2";
+        case 2:  return "QC3";
+        case 3:  return "QC3+";
+        case 4:  return "SFCP";
+        case 5:  return "AFC";
+        case 6:  return "FCP";
+        case 7:  return "SCP";
+        case 8:  return "VOOC1.0";
+        case 9:  return "VOOC4.0";
+        case 10: return "SVOOC2.0";
+        case 11: return "TFCP";
+        case 12: return "UFCS";
+        case 13: return "PE1";
+        case 14: return "PE2";
+        case 15: return "PD_Fix5V";
+        case 16: return "PD_FixHV";
+        case 17: return "PD_SPR_AVS";
+        case 18: return "PD_PPS";
+        case 19: return "PD_EPR_HV";
+        case 20: return "PD_AVS";
+        case 0xff: return "未充电";
+        default: return "未知";
+    }
+}
+
 // 创建电源显示UI
 esp_err_t power_monitor_create_ui(void)
 {
@@ -466,9 +496,9 @@ esp_err_t power_monitor_create_ui(void)
     // 开始WiFi图标闪烁定时器
     wifi_blink_timer = lv_timer_create(wifi_blink_timer_cb, 500, NULL);
     
-    // 创建一个大的容器，包含所有功率条
+    // 创建一个大的容器，包含所有功率条 - 增加高度以容纳总功率显示
     lv_obj_t *power_container = lv_obj_create(ui_screen);
-    lv_obj_set_size(power_container, screen_width - 40, 350);
+    lv_obj_set_size(power_container, screen_width - 40, 400); // 从350增加到400
     lv_obj_align(power_container, LV_ALIGN_TOP_MID, 0, 60);
     lv_obj_set_style_bg_color(power_container, lv_color_hex(0xFAFAFA), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(power_container, lv_color_hex(0xDDDDDD), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -478,28 +508,29 @@ esp_err_t power_monitor_create_ui(void)
     
     // 为每个端口创建水平功率条和标签 - 调整尺寸以适应更大的屏幕
     int bar_height = 20;     // 条的高度
+    int port_spacing = 55;   // 端口间距，从65减少到55以节省垂直空间
     
     for (int i = 0; i < MAX_PORTS; i++) {
         // 创建端口标签
         ui_port_labels[i] = lv_label_create(power_container);
         lv_label_set_text(ui_port_labels[i], portInfos[i].name);
         lv_obj_set_style_text_color(ui_port_labels[i], get_voltage_color(portInfos[i].voltage), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_font(ui_port_labels[i], &lv_font_montserrat_20, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_pos(ui_port_labels[i], 20, i * 65 + 10);
+        lv_obj_set_style_text_font(ui_port_labels[i], &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_pos(ui_port_labels[i], 20, i * port_spacing + 12);
         
-        // 创建电压、电流、功率标签
+        // 创建电压、电流、功率标签 - 给文字增加宽度
         char info_text[64];
         sprintf(info_text, "0.00V  0.00A  0.00W");
         ui_power_values[i] = lv_label_create(power_container);
         lv_label_set_text(ui_power_values[i], info_text);
         lv_obj_set_style_text_color(ui_power_values[i], get_voltage_color(portInfos[i].voltage), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(ui_power_values[i], &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_pos(ui_power_values[i], 80, i * 65 + 12);
+        lv_obj_set_pos(ui_power_values[i], 80, i * port_spacing + 12);
         
-        // 创建功率条（彩色水平条）
+        // 创建功率条（彩色水平条）- 向左移动位置
         ui_power_arcs[i] = lv_bar_create(power_container);
-        lv_obj_set_size(ui_power_arcs[i], 400, bar_height); // 减小宽度，避免与文字重叠
-        lv_obj_set_pos(ui_power_arcs[i], 300, i * 65 + 12);
+        lv_obj_set_size(ui_power_arcs[i], 400, bar_height); // 保持宽度不变
+        lv_obj_set_pos(ui_power_arcs[i], 330, i * port_spacing + 12); // 右移到容器右侧
         
         // 设置条的颜色
         lv_obj_set_style_bg_color(ui_power_arcs[i], lv_color_hex(0xCCCCCC), LV_PART_MAIN);  // 背景色使用深灰色
@@ -520,9 +551,42 @@ esp_err_t power_monitor_create_ui(void)
         lv_bar_set_value(ui_power_arcs[i], 0, LV_ANIM_OFF);
     }
     
-    // 移除总功率标签和弧形
-    ui_total_label = NULL;
-    ui_total_arc = NULL;
+    // 添加总功率显示 - 与单端口保持风格一致
+    ui_total_label = lv_label_create(power_container);
+    lv_label_set_text(ui_total_label, "总功率"); // 仅显示"总功率"，不显示数值
+    lv_obj_set_style_text_color(ui_total_label, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_total_label, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT); // 与端口标签一致
+    lv_obj_set_pos(ui_total_label, 20, MAX_PORTS * port_spacing + 12);
+    
+    // 创建总功率信息标签 - 与单端口电压电流功率标签风格一致
+    lv_obj_t *ui_total_power_value = lv_label_create(power_container);
+    lv_label_set_text(ui_total_power_value, "0.00W");
+    lv_obj_set_style_text_color(ui_total_power_value, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_total_power_value, &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT); // 与端口信息一致
+    lv_obj_set_pos(ui_total_power_value, 80, MAX_PORTS * port_spacing + 12);
+    
+    // 创建总功率条 - 与单端口功率条保持一致的风格
+    ui_total_arc = lv_bar_create(power_container);
+    lv_obj_set_size(ui_total_arc, 400, bar_height); // 与单端口宽度一致
+    lv_obj_set_pos(ui_total_arc, 330, MAX_PORTS * port_spacing + 12); // 与单端口位置一致
+    
+    // 设置总功率条的颜色 - 使用与单端口一致的颜色
+    lv_obj_set_style_bg_color(ui_total_arc, lv_color_hex(0xCCCCCC), LV_PART_MAIN); // 与单端口一致
+    lv_obj_set_style_bg_color(ui_total_arc, lv_color_hex(0x88FF00), LV_PART_INDICATOR); // 与单端口一致
+    
+    // 启用水平渐变
+    lv_obj_set_style_bg_grad_dir(ui_total_arc, LV_GRAD_DIR_HOR, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    
+    // 设置渐变终止颜色为橙色 - 与单端口一致
+    lv_obj_set_style_bg_grad_color(ui_total_arc, lv_color_hex(0xFF8800), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    
+    // 设置条的圆角
+    lv_obj_set_style_radius(ui_total_arc, bar_height/2, LV_PART_MAIN);
+    lv_obj_set_style_radius(ui_total_arc, bar_height/2, LV_PART_INDICATOR);
+    
+    // 设置初始值为0
+    lv_bar_set_range(ui_total_arc, 0, 100);
+    lv_bar_set_value(ui_total_arc, 0, LV_ANIM_OFF);
     
     // 不再需要表格
     ui_port_table = NULL;
@@ -798,7 +862,7 @@ void power_monitor_parse_data(char* payload)
     }
     
     // 添加一行日志显示所有端口的电源信息
-    ESP_LOGI(TAG, "电源信息: A=%.2fW(%dmA,%dmV), C1=%.2fW(%dmA,%dmV), C2=%.2fW(%dmA,%dmV), C3=%.2fW(%dmA,%dmV), C4=%.2fW(%dmA,%dmV), 总功率=%.2fW", 
+    ESP_LOGI(TAG, "A=%.2fW(%dmA,%dmV), C1=%.2fW(%dmA,%dmV), C2=%.2fW(%dmA,%dmV), C3=%.2fW(%dmA,%dmV), C4=%.2fW(%dmA,%dmV), 总功率=%.2fW", 
              portInfos[0].power, portInfos[0].current, portInfos[0].voltage,
              portInfos[1].power, portInfos[1].current, portInfos[1].voltage,
              portInfos[2].power, portInfos[2].current, portInfos[2].voltage,
@@ -835,8 +899,11 @@ void power_monitor_update_ui(void)
         // 更新端口标签颜色
         lv_obj_set_style_text_color(ui_port_labels[i], color, LV_PART_MAIN | LV_STATE_DEFAULT);
         
-        // 格式化并更新信息文本
-        sprintf(text_buf, "%.2fV  %.2fA  %.2fW", voltage_v, current_a, power_w);
+        // 获取充电协议名称
+        const char* protocol_name = get_fc_protocol_name(portInfos[i].fc_protocol);
+        
+        // 格式化并更新信息文本，添加协议信息
+        sprintf(text_buf, "%.1fV  %.1fA  %.2fW %s", voltage_v, current_a, power_w, protocol_name);
         lv_label_set_text(ui_power_values[i], text_buf);
         lv_obj_set_style_text_color(ui_power_values[i], color, LV_PART_MAIN | LV_STATE_DEFAULT);
         
@@ -859,6 +926,32 @@ void power_monitor_update_ui(void)
         
         // 每更新一个端口后添加短暂延迟
         vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+    
+    // 更新总功率显示 - 只更新功率值文本
+    if (ui_total_label != NULL) {
+        // 找到总功率值标签 - 它紧跟在ui_total_label之后
+        lv_obj_t *value_label = lv_obj_get_child(lv_obj_get_parent(ui_total_label), lv_obj_get_index(ui_total_label) + 1);
+        if (value_label != NULL) {
+            sprintf(text_buf, "%.2fW", totalPower);
+            lv_label_set_text(value_label, text_buf);
+        }
+    }
+    
+    // 更新总功率条 - 使用MAX_POWER_WATTS作为最大值
+    if (ui_total_arc != NULL) {
+        int total_percent = (int)((totalPower / MAX_POWER_WATTS) * 100);
+        // 确保非零功率至少显示一些进度
+        if (totalPower > 0 && total_percent == 0) {
+            total_percent = 1;
+        }
+        // 限制最大值为100
+        if (total_percent > 100) {
+            total_percent = 100;
+        }
+        
+        // 设置总功率条的值
+        lv_bar_set_value(ui_total_arc, total_percent, LV_ANIM_OFF);
     }
     
     // UI更新完成后添加短暂延迟
