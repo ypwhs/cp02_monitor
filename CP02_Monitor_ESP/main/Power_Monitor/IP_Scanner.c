@@ -28,9 +28,10 @@ static const char *TAG = "IP_SCANNER";
 #define NVS_KEY_IP "saved_ip"
 
 // 修改超时配置，区分连接和读取超时
-#define TCP_CONNECT_TIMEOUT_MS 150   // TCP连接超时时间 (ms)
+#define TCP_CONNECT_TIMEOUT_MS 500   // TCP连接超时时间 (ms)
 #define HTTP_READ_TIMEOUT_MS 1000    // HTTP读取超时时间 (ms)
 #define HTTP_MAX_RESPONSE_SIZE 2048  // 最大HTTP响应大小
+#define IP_CHECK_RETRY_COUNT 1       // IP检查重试次数
 
 // 并行任务相关定义 - 增加栈大小
 #define SCAN_TASK_STACK_SIZE 8192   // 增加到8KB
@@ -160,136 +161,147 @@ bool IP_Scanner_CheckIP(const char* ip) {
         return false;
     }
 
-    // 首先检查80端口是否开放
-    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-    if (sock < 0) {
-        ESP_LOGD(TAG, "[%s] 创建socket失败", ip);
-        return false;
-    }
+    // 增加重试机制，最多重试3次
+    for (int retry = 0; retry < IP_CHECK_RETRY_COUNT; retry++) {
+        if (retry > 0) {
+            ESP_LOGI(TAG, "[%s] 第%d次重试检查...", ip, retry);
+            // 重试间隔增加
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        
+        // 首先检查80端口是否开放
+        int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+        if (sock < 0) {
+            ESP_LOGD(TAG, "[%s] 创建socket失败", ip);
+            continue;  // 重试
+        }
 
-    struct sockaddr_in server_addr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(80),
-        .sin_addr.s_addr = inet_addr(ip)
-    };
+        struct sockaddr_in server_addr = {
+            .sin_family = AF_INET,
+            .sin_port = htons(80),
+            .sin_addr.s_addr = inet_addr(ip)
+        };
 
-    // 设置连接超时时间
-    struct timeval connect_timeout = {
-        .tv_sec = 0,
-        .tv_usec = TCP_CONNECT_TIMEOUT_MS * 1000
-    };
+        // 设置连接超时时间
+        struct timeval connect_timeout = {
+            .tv_sec = 0,
+            .tv_usec = TCP_CONNECT_TIMEOUT_MS * 1000
+        };
 
-    // 设置非阻塞模式
-    int flags = fcntl(sock, F_GETFL, 0);
-    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        // 设置非阻塞模式
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
 
-    // 尝试连接
-    int ret = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
-    
-    if (ret < 0 && errno != EINPROGRESS) {
-        ESP_LOGD(TAG, "[%s] 连接失败，错误码: %d", ip, errno);
-        close(sock);
-        return false;
-    }
+        // 尝试连接
+        int ret = connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        
+        if (ret < 0 && errno != EINPROGRESS) {
+            ESP_LOGD(TAG, "[%s] 连接失败，错误码: %d", ip, errno);
+            close(sock);  // 确保关闭socket
+            continue;  // 重试
+        }
 
-    // 使用select等待连接完成
-    fd_set fdset;
-    FD_ZERO(&fdset);
-    FD_SET(sock, &fdset);
-    
-    ret = select(sock + 1, NULL, &fdset, NULL, &connect_timeout);
-    if (ret <= 0) {
-        ESP_LOGD(TAG, "[%s] 80端口连接超时或未就绪", ip);
-        close(sock);
-        return false;
-    }
+        // 使用select等待连接完成
+        fd_set fdset;
+        FD_ZERO(&fdset);
+        FD_SET(sock, &fdset);
+        
+        ret = select(sock + 1, NULL, &fdset, NULL, &connect_timeout);
+        if (ret <= 0) {
+            ESP_LOGD(TAG, "[%s] 80端口连接超时或未就绪", ip);
+            close(sock);  // 确保关闭socket
+            continue;  // 重试
+        }
 
-    // 检查连接是否成功
-    int error = 0;
-    socklen_t len = sizeof(error);
-    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
-        ESP_LOGD(TAG, "[%s] 80端口连接检查失败，错误码: %d", ip, error);
-        close(sock);
-        return false;
-    }
+        // 检查连接是否成功
+        int error = 0;
+        socklen_t len = sizeof(error);
+        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+            ESP_LOGD(TAG, "[%s] 80端口连接检查失败，错误码: %d", ip, error);
+            close(sock);  // 确保关闭socket
+            continue;  // 重试
+        }
 
-    ESP_LOGI(TAG, "[%s] 80端口可访问，开始检查/metrics接口", ip);
+        ESP_LOGI(TAG, "[%s] 80端口可访问，开始检查/metrics接口", ip);
 
-    // 设置为阻塞模式并设置读取超时
-    fcntl(sock, F_SETFL, flags); // 恢复原始标志（移除非阻塞）
-    struct timeval read_timeout = {
-        .tv_sec = HTTP_READ_TIMEOUT_MS / 1000,
-        .tv_usec = (HTTP_READ_TIMEOUT_MS % 1000) * 1000
-    };
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof(read_timeout));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &read_timeout, sizeof(read_timeout));
+        // 设置为阻塞模式并设置读取超时
+        fcntl(sock, F_SETFL, flags); // 恢复原始标志（移除非阻塞）
+        struct timeval read_timeout = {
+            .tv_sec = HTTP_READ_TIMEOUT_MS / 1000,
+            .tv_usec = (HTTP_READ_TIMEOUT_MS % 1000) * 1000
+        };
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof(read_timeout));
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &read_timeout, sizeof(read_timeout));
 
-    // 如果80端口开放，尝试访问metrics接口
-    char request[128];
-    snprintf(request, sizeof(request), "GET /metrics HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", ip);
-    
-    if (send(sock, request, strlen(request), 0) < 0) {
-        ESP_LOGD(TAG, "[%s] 发送HTTP请求失败, errno: %d", ip, errno);
-        close(sock);
-        return false;
-    }
+        // 如果80端口开放，尝试访问metrics接口
+        char request[128];
+        snprintf(request, sizeof(request), "GET /metrics HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", ip);
+        
+        if (send(sock, request, strlen(request), 0) < 0) {
+            ESP_LOGD(TAG, "[%s] 发送HTTP请求失败, errno: %d", ip, errno);
+            close(sock);  // 确保关闭socket
+            continue;  // 重试
+        }
 
-    // 使用全局缓冲区接收HTTP响应
-    memset(http_response_buffer, 0, sizeof(http_response_buffer));
-    
-    // 循环接收数据，确保获取完整响应
-    int total_received = 0;
-    int bytes_received = 0;
-    
-    do {
-        bytes_received = recv(sock, http_response_buffer + total_received, 
-                             sizeof(http_response_buffer) - total_received - 1, 0);
-        if (bytes_received > 0) {
-            total_received += bytes_received;
-            // 防止缓冲区溢出
-            if (total_received >= sizeof(http_response_buffer) - 1) {
-                break;
+        // 使用全局缓冲区接收HTTP响应
+        memset(http_response_buffer, 0, sizeof(http_response_buffer));
+        
+        // 循环接收数据，确保获取完整响应
+        int total_received = 0;
+        int bytes_received = 0;
+        
+        do {
+            bytes_received = recv(sock, http_response_buffer + total_received, 
+                                sizeof(http_response_buffer) - total_received - 1, 0);
+            if (bytes_received > 0) {
+                total_received += bytes_received;
+                // 防止缓冲区溢出
+                if (total_received >= sizeof(http_response_buffer) - 1) {
+                    break;
+                }
             }
+        } while (bytes_received > 0);
+        
+        if (total_received <= 0) {
+            ESP_LOGD(TAG, "[%s] 接收HTTP响应失败或为空, errno: %d", ip, errno);
+            close(sock);  // 确保关闭socket
+            continue;  // 重试
         }
-    } while (bytes_received > 0);
-    
-    if (total_received <= 0) {
-        ESP_LOGD(TAG, "[%s] 接收HTTP响应失败或为空, errno: %d", ip, errno);
+
+        ESP_LOGI(TAG, "=== 来自[%s]的HTTP响应，长度: %d 字节 ===", ip, total_received);
+        
+        // 确保有足够的数据
+        http_response_buffer[total_received] = '\0';
+        
+        // 打印HTTP响应详情以便调试
+        log_http_response(ip, http_response_buffer, total_received);
+        
+        // 关闭连接
         close(sock);
-        return false;
-    }
 
-    ESP_LOGI(TAG, "=== 来自[%s]的HTTP响应，长度: %d 字节 ===", ip, total_received);
-    
-    // 确保有足够的数据
-    http_response_buffer[total_received] = '\0';
-    
-    // 打印HTTP响应详情以便调试
-    log_http_response(ip, http_response_buffer, total_received);
-    
-    // 关闭连接
-    close(sock);
-
-    // 检查响应是否包含metrics数据（直接检查整个响应）
-    bool contains_metrics = strstr(http_response_buffer, "ionbridge_port_current") != NULL;
-    
-    if (contains_metrics) {
-        ESP_LOGI(TAG, "[%s] 响应包含 ionbridge_port_current 字段，确认为小电拼设备", ip);
-        xSemaphoreTake(scan_semaphore, portMAX_DELAY);
-        found_device_count++;
+        // 检查响应是否包含metrics数据（直接检查整个响应）
+        bool contains_metrics = strstr(http_response_buffer, "ionbridge_port_current") != NULL;
         
-        // 保存找到的第一个有效IP
-        if (found_device_count == 1) {
-            IP_Scanner_SaveIP(ip);
+        if (contains_metrics) {
+            ESP_LOGI(TAG, "[%s] 响应包含 ionbridge_port_current 字段，确认为小电拼设备", ip);
+            xSemaphoreTake(scan_semaphore, portMAX_DELAY);
+            found_device_count++;
+            
+            // 保存找到的第一个有效IP
+            if (found_device_count == 1) {
+                IP_Scanner_SaveIP(ip);
+            }
+            xSemaphoreGive(scan_semaphore);
+            
+            ESP_LOGI(TAG, "找到设备: %s", ip);
+            return true;
+        } else {
+            ESP_LOGD(TAG, "[%s] 响应不包含小电拼特征字段", ip);
         }
-        xSemaphoreGive(scan_semaphore);
-        
-        ESP_LOGI(TAG, "找到设备: %s", ip);
-    } else {
-        ESP_LOGD(TAG, "[%s] 响应不包含小电拼特征字段", ip);
     }
     
-    return contains_metrics;
+    // ESP_LOGW(TAG, "[%s] 经过%d次重试后仍未检测到有效设备", ip, IP_CHECK_RETRY_COUNT);
+    return false;
 }
 
 // 扫描任务函数
@@ -320,7 +332,7 @@ void scan_task_function(void *pvParameters) {
 }
 
 // 扫描网络中的设备
-esp_err_t IP_Scanner_ScanNetwork(const char* base_ip, ip_scan_callback_t callback) {
+esp_err_t IP_Scanner_ScanNetwork(const char* base_ip, ip_scan_callback_t callback, bool skip_validation) {
     ESP_LOGI(TAG, "准备扫描网段...");
     
     if (!ip_scanner_initialized || !callback) {
@@ -332,6 +344,57 @@ esp_err_t IP_Scanner_ScanNetwork(const char* base_ip, ip_scan_callback_t callbac
     if (!WIFI_Connection || !WIFI_GotIP) {
         ESP_LOGW(TAG, "WiFi未连接或未获取IP地址，暂不进行扫描");
         return ESP_ERR_WIFI_NOT_CONNECT;
+    }
+    
+    // 首先尝试加载上次保存的IP
+    char saved_ip[32] = {0};
+    if (IP_Scanner_LoadIP(saved_ip, sizeof(saved_ip))) {
+        ESP_LOGI(TAG, "找到已保存的IP地址: %s", saved_ip);
+        
+        // 如果外部已经验证过，则跳过内部验证
+        if (skip_validation) {
+            ESP_LOGI(TAG, "跳过IP验证（外部已验证）：%s", saved_ip);
+            
+            // 直接通知回调已找到有效IP
+            if (callback) {
+                ESP_LOGI(TAG, "通知回调已找到有效IP: %s", saved_ip);
+                callback(saved_ip, true);
+            }
+            return ESP_OK;
+        }
+        
+        // 添加明确的验证日志
+        ESP_LOGI(TAG, "========================================");
+        ESP_LOGI(TAG, "开始对保存的IP地址进行稳定性验证: %s", saved_ip);
+        ESP_LOGI(TAG, "========================================");
+        
+        // 在验证过程中锁定其他任务
+        xSemaphoreTake(scan_semaphore, portMAX_DELAY);
+        
+        // 检查保存的IP是否仍然可用
+        bool check_result = IP_Scanner_CheckIP(saved_ip);
+        
+        // 释放信号量
+        xSemaphoreGive(scan_semaphore);
+        
+        ESP_LOGI(TAG, "========================================");
+        ESP_LOGI(TAG, "IP地址验证结果: %s", check_result ? "可用" : "不可用");
+        ESP_LOGI(TAG, "========================================");
+        
+        if (check_result) {
+            ESP_LOGI(TAG, "已保存的IP地址 %s 仍然可用，无需扫描网络", saved_ip);
+            
+            // 通知回调函数找到可用设备
+            if (callback) {
+                callback(saved_ip, true);
+            }
+            
+            return ESP_OK;
+        } else {
+            ESP_LOGW(TAG, "已保存的IP地址 %s 不可用，需要重新扫描", saved_ip);
+        }
+    } else {
+        ESP_LOGI(TAG, "未找到已保存的IP地址，需要扫描网络");
     }
     
     // 检查基础IP

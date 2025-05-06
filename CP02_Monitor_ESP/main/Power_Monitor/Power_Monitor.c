@@ -20,6 +20,9 @@
 // 标签用于日志
 static const char *TAG = "POWER_MONITOR";
 
+// 从main.c导入的IP验证标志
+bool IP_Valid_In_Main = false;
+
 // 声明外部常量引用
 extern const int MAX_POWER_WATTS;    // 最大总功率
 extern const int MAX_PORT_WATTS;     // 每个端口最大功率
@@ -31,7 +34,6 @@ PortInfo portInfos[MAX_PORTS];
 float totalPower = 0.0f;
 bool dataError = false;  // 数据错误标志
 extern bool WIFI_Connection;
-extern bool WIFI_GotIP;
 
 // UI组件
 static lv_obj_t *ui_screen;
@@ -67,6 +69,10 @@ static void scan_result_callback(const char* ip, bool success) {
         ESP_LOGI(TAG, "       发现小电拼设备: %s", ip);
         ESP_LOGI(TAG, "====================================================");
         
+        // 保存发现的有效IP地址
+        ESP_LOGI(TAG, "保存有效IP地址到NVS: %s", ip);
+        IP_Scanner_SaveIP(ip);
+        
         // 更新当前数据URL为新发现的设备
         char new_url[64] = {0};
         snprintf(new_url, sizeof(new_url), "http://%s/metrics", ip);
@@ -81,6 +87,41 @@ static void scan_result_callback(const char* ip, bool success) {
             strncpy(current_data_url, new_url, sizeof(current_data_url) - 1);
         } else {
             ESP_LOGI(TAG, "数据URL未变: %s", current_data_url);
+        }
+        
+        // 立即完成启动动画并启动监控
+        if (!startup_animation_completed) {
+            ESP_LOGI(TAG, "设备发现后强制完成启动动画");
+            
+            // 强制完成动画
+            if (startup_anim_timer != NULL) {
+                lv_timer_del(startup_anim_timer);
+                startup_anim_timer = NULL;
+            }
+            
+            // 重置所有进度条为0
+            for (int i = 0; i < MAX_PORTS; i++) {
+                lv_bar_set_value(ui_power_bars[i], 0, LV_ANIM_OFF);
+            }
+            lv_bar_set_value(ui_total_bar, 0, LV_ANIM_OFF);
+            
+            // 设置动画完成标志
+            startup_animation_completed = true;
+            
+            // 立即创建刷新定时器（如果尚未创建）
+            if (refresh_timer == NULL) {
+                ESP_LOGI(TAG, "发现设备后立即开始电源监控");
+                ESP_LOGI(TAG, "监控数据来源URL: %s", current_data_url);
+                refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
+                ESP_LOGI(TAG, "刷新定时器已创建，间隔: %d ms", REFRESH_INTERVAL);
+            }
+        } else {
+            // 已经完成动画，但检查刷新定时器是否需要更新URL
+            // 注意：这里不创建新的定时器，保持现有定时器运行
+            ESP_LOGI(TAG, "URL已更新，将在下一次刷新中使用新URL: %s", current_data_url);
+            
+            // 立即触发一次数据获取，使用新的URL
+            PowerMonitor_FetchData();
         }
     }
 }
@@ -115,52 +156,87 @@ static bool extract_network_prefix(const char* ip, char* prefix_buffer, size_t b
 // 修改 wifi_status_timer_cb 函数，只有在动画完成后才开始监控
 static void wifi_status_timer_cb(lv_timer_t *timer) {
     static bool has_scanned = false;
+    
+    // 只记录当前WiFi连接状态，不再检查IP状态
+    ESP_LOGI(TAG, "WiFi状态检查 - 连接状态: %s", 
+             WIFI_Connection ? "已连接" : "未连接");
+    
     PowerMonitor_UpdateWiFiStatus();
     
-    // 如果WiFi连接成功且已获取IP地址
-    if (WIFI_Connection && WIFI_GotIP) {
+    // 只检查WiFi连接状态，不再检查IP状态
+    if (WIFI_Connection) {
         // 如果启动动画已完成且刷新定时器还未创建，则创建刷新定时器
         if (startup_animation_completed && refresh_timer == NULL) {
-            ESP_LOGI(TAG, "WiFi connected and IP obtained, starting power monitoring");
-            ESP_LOGI(TAG, "Monitoring data from URL: %s", current_data_url);
+            ESP_LOGI(TAG, "WiFi已连接，开始电源监控");
+            ESP_LOGI(TAG, "监控数据来源URL: %s", current_data_url);
             refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
-            ESP_LOGI(TAG, "Refresh timer created with interval: %d ms", REFRESH_INTERVAL);
+            ESP_LOGI(TAG, "刷新定时器已创建，间隔: %d ms", REFRESH_INTERVAL);
         }
         
-        // 如果尚未进行扫描，且动画已完成，则进行网络扫描
+        // 如果尚未进行扫描，且动画已完成，且当前没有有效的URL，则进行网络扫描
         if (!has_scanned && startup_animation_completed) {
-            ESP_LOGI(TAG, "WiFi connected and IP obtained, starting network scan");
+            // 检查当前URL是否有效 - 添加此检查
+            bool need_scan = true;
+            char saved_ip[32] = {0};
             
-            // 获取当前IP地址
-            esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-            if (netif != NULL) {
-                esp_netif_ip_info_t ip_info;
-                char self_ip[16] = {0};
-                char network_prefix[16] = {0};
+            // 如果main.c中已经验证过IP，则跳过扫描
+            if (IP_Valid_In_Main) {
+                ESP_LOGI(TAG, "主程序已验证IP有效，无需重新扫描");
+                need_scan = false;
+                has_scanned = true;  // 标记为已扫描，避免后续重复检查
+            } 
+            // 否则检查是否有保存的有效IP
+            else if (IP_Scanner_LoadIP(saved_ip, sizeof(saved_ip)) && strlen(saved_ip) > 0) {
+                ESP_LOGI(TAG, "已有保存的IP: %s，检查是否需要扫描", saved_ip);
                 
-                if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-                    sprintf(self_ip, IPSTR, IP2STR(&ip_info.ip));
-                    ESP_LOGI(TAG, "Current device IP: %s", self_ip);
-                    
-                    // 提取网段前缀
-                    if (extract_network_prefix(self_ip, network_prefix, sizeof(network_prefix))) {
-                        // 开始扫描网络
-                        ESP_LOGI(TAG, "===========================");
-                        ESP_LOGI(TAG, "开始扫描网段: %s* 寻找小电拼设备", network_prefix);
-                        ESP_LOGI(TAG, "===========================");
-                        
-                        // 记录扫描前的URL
-                        ESP_LOGI(TAG, "扫描前的数据URL: %s", current_data_url);
-                        
-                        IP_Scanner_ScanNetwork(network_prefix, scan_result_callback);
-                        
-                        // 记录扫描后的URL，看是否有变化
-                        ESP_LOGI(TAG, "扫描后的数据URL: %s", current_data_url);
-                        has_scanned = true;
-                    }
+                // 检查当前URL是否包含此IP - 如果包含，说明已经有效
+                char expected_url[64] = {0};
+                snprintf(expected_url, sizeof(expected_url), "http://%s/metrics", saved_ip);
+                
+                if (strcmp(current_data_url, expected_url) == 0) {
+                    ESP_LOGI(TAG, "当前URL已包含有效IP，无需重新扫描");
+                    need_scan = false;
+                    has_scanned = true;  // 标记为已扫描，避免后续重复检查
                 }
-            } else {
-                ESP_LOGE(TAG, "Failed to get network interface handle");
+            }
+            
+            if (need_scan) {
+                ESP_LOGI(TAG, "WiFi已连接，开始网络扫描");
+                
+                // 获取当前IP地址
+                esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+                if (netif != NULL) {
+                    esp_netif_ip_info_t ip_info;
+                    char self_ip[16] = {0};
+                    char network_prefix[16] = {0};
+                    
+                    if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+                        sprintf(self_ip, IPSTR, IP2STR(&ip_info.ip));
+                        ESP_LOGI(TAG, "当前设备IP: %s", self_ip);
+                        
+                        // 提取网段前缀
+                        if (extract_network_prefix(self_ip, network_prefix, sizeof(network_prefix))) {
+                            // 保存扫描前的URL
+                            char pre_scan_url[64];
+                            strcpy(pre_scan_url, current_data_url);
+                            ESP_LOGI(TAG, "===========================");
+                            ESP_LOGI(TAG, "开始扫描网段: %s* 寻找小电拼设备", network_prefix);
+                            ESP_LOGI(TAG, "===========================");
+                            
+                            // 记录扫描前的URL
+                            ESP_LOGI(TAG, "扫描前的数据URL: %s", pre_scan_url);
+                            
+                            // 开始网络扫描，允许跳过验证，因为main中已经验证过了
+                            IP_Scanner_ScanNetwork(network_prefix, scan_result_callback, true);
+                            
+                            // 记录扫描后的URL，看是否有变化
+                            ESP_LOGI(TAG, "扫描后的数据URL: %s", current_data_url);
+                            has_scanned = true;
+                        }
+                    }
+                } else {
+                    ESP_LOGE(TAG, "获取网络接口句柄失败");
+                }
             }
         }
     }
@@ -169,7 +245,7 @@ static void wifi_status_timer_cb(lv_timer_t *timer) {
 // 修改启动动画回调函数，在动画完成时设置标志
 static void startup_animation_cb(lv_timer_t *timer) {
     // 更新进度值
-    startup_anim_progress += 10;
+    startup_anim_progress += 20;
     
     // 为所有进度条设置进度
     for (int i = 0; i < MAX_PORTS; i++) {
@@ -178,6 +254,20 @@ static void startup_animation_cb(lv_timer_t *timer) {
     
     // 设置总功率进度条进度
     lv_bar_set_value(ui_total_bar, startup_anim_progress, LV_ANIM_OFF);
+    
+    // 立即完成动画
+    if (startup_anim_progress < 100) {
+        // 强制设置进度为100%
+        startup_anim_progress = 100;
+        
+        // 为所有进度条设置进度
+        for (int i = 0; i < MAX_PORTS; i++) {
+            lv_bar_set_value(ui_power_bars[i], startup_anim_progress, LV_ANIM_OFF);
+        }
+        
+        // 设置总功率进度条进度
+        lv_bar_set_value(ui_total_bar, startup_anim_progress, LV_ANIM_OFF);
+    }
     
     // 当达到100%时停止动画
     if (startup_anim_progress >= 100) {
@@ -194,14 +284,25 @@ static void startup_animation_cb(lv_timer_t *timer) {
         startup_animation_completed = true;
         
         ESP_LOGI(TAG, "Startup animation completed");
+        
+        // 立即检查WiFi状态并创建刷新定时器(如果已连接)
+        if (WIFI_Connection && refresh_timer == NULL) {
+            ESP_LOGI(TAG, "动画完成后立即开始电源监控");
+            ESP_LOGI(TAG, "监控数据来源URL: %s", current_data_url);
+            refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
+            ESP_LOGI(TAG, "刷新定时器已创建，间隔: %d ms", REFRESH_INTERVAL);
+            
+            // 立即执行一次数据获取
+            PowerMonitor_FetchData();
+        }
     }
 }
 
 
 // WiFi状态图标闪烁计时器回调
 static void wifi_blink_timer_cb(lv_timer_t *timer) {
-    // 只有当WiFi连接成功且没有数据错误时才闪烁
-    if (WIFI_Connection && WIFI_GotIP && !dataError) {
+    // 只检查WiFi连接状态，不再检查IP状态
+    if (WIFI_Connection && !dataError) {
         wifi_icon_state = !wifi_icon_state;
         if (wifi_icon_state) {
             // 绿色
@@ -216,9 +317,6 @@ static void wifi_blink_timer_cb(lv_timer_t *timer) {
     } else if (!WIFI_Connection) {
         // WiFi断开连接时保持红色
         lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFF0000), LV_PART_MAIN | LV_STATE_DEFAULT);
-    } else if (WIFI_Connection && !WIFI_GotIP) {
-        // 正在获取IP
-        lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFFFF00), LV_PART_MAIN | LV_STATE_DEFAULT);
     }
 }
 
@@ -313,8 +411,8 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 void PowerMonitor_Init(void) {
     ESP_LOGI(TAG, "Initializing Power Monitor...");
     
-    // 初始化WiFi状态
-    WIFI_GotIP = false;
+    // 不要在这里初始化WiFi状态，因为main.c中已经设置了正确的值
+    // WIFI_GotIP = false;  // 删除这行
     
     // 初始化启动动画标志
     startup_animation_completed = false;
@@ -358,9 +456,9 @@ void PowerMonitor_Init(void) {
     // 创建UI
     PowerMonitor_CreateUI();
     
-    // 启动动画：创建一个50ms的定时器，每次增加5%，总共20步，约1秒完成
+    // 启动动画：创建一个5ms的定时器，每次增加20%，总共5步，约0.25秒完成
     startup_anim_progress = 0;
-    startup_anim_timer = lv_timer_create(startup_animation_cb, 10, NULL);
+    startup_anim_timer = lv_timer_create(startup_animation_cb, 5, NULL);
     
     // 创建WiFi状态监控定时器 - 它会在WiFi连接后启动数据刷新定时器
     wifi_timer = lv_timer_create(wifi_status_timer_cb, 1000, NULL);
@@ -473,9 +571,9 @@ void PowerMonitor_FetchData(void) {
         return; // 间隔不够，跳过本次请求
     }
     
-    // 如果WiFi未连接或未获取IP地址，则不尝试获取数据
-    if (!WIFI_Connection || !WIFI_GotIP) {
-        ESP_LOGW(TAG, "WiFi not connected or IP not obtained, skipping data fetch");
+    // 只检查WiFi连接状态，不再检查IP状态
+    if (!WIFI_Connection) {
+        ESP_LOGW(TAG, "WiFi未连接，跳过数据获取");
         return;
     }
     
@@ -493,7 +591,7 @@ void PowerMonitor_FetchData(void) {
         
         client = esp_http_client_init(&config);
         if (client == NULL) {
-            ESP_LOGE(TAG, "Failed to initialize HTTP client");
+            ESP_LOGE(TAG, "初始化HTTP客户端失败");
             return;
         }
         
@@ -504,11 +602,9 @@ void PowerMonitor_FetchData(void) {
     }
     
     // 记录请求开始时间
-    // ESP_LOGI(TAG, "Fetching data from %s (after %d ms)", DATA_URL, (int)(current_time - last_data_fetch_time));
     last_data_fetch_time = current_time;
 
     // 执行非阻塞HTTP请求
-    // 注意：在实际实现中，这可能需要单独的任务或非阻塞API
     esp_err_t err = esp_http_client_perform(client);
     
     if (err == ESP_OK) {
@@ -518,11 +614,11 @@ void PowerMonitor_FetchData(void) {
             dataError = false;  // 重置数据错误标志
         } else {
             dataError = true;   // 设置数据错误标志
-            ESP_LOGE(TAG, "HTTP GET request failed with status code: %d", status_code);
+            ESP_LOGE(TAG, "HTTP GET请求失败，状态码: %d", status_code);
         }
     } else {
         dataError = true;   // 设置数据错误标志
-        ESP_LOGE(TAG, "HTTP GET request failed: %s (error code: %d)", esp_err_to_name(err), err);
+        ESP_LOGE(TAG, "HTTP GET请求失败: %s (错误码: %d)", esp_err_to_name(err), err);
         
         // 如果是超时错误，清理并重新初始化客户端
         if (err == ESP_ERR_HTTP_FETCH_HEADER || err == ESP_ERR_HTTP_CONNECTING) {
@@ -531,9 +627,6 @@ void PowerMonitor_FetchData(void) {
             client = NULL;
         }
     }
-    
-    // 不在每次请求后都清理客户端，仅在需要重置时清理
-    // 这减少了频繁初始化的开销
     
     // 更新WiFi状态以反映数据错误
     PowerMonitor_UpdateWiFiStatus();
@@ -747,29 +840,28 @@ void PowerMonitor_UpdateUI(void) {
 
 // 更新UI上的WiFi状态
 void PowerMonitor_UpdateWiFiStatus(void) {
+    // 输出当前WiFi状态的详细信息，不再检查IP状态
+    ESP_LOGI(TAG, "更新WiFi状态UI - 连接状态: %d, 数据错误: %d", 
+             WIFI_Connection, dataError);
+    
     // 更新WiFi连接状态
-    if (WIFI_Connection && WIFI_GotIP) {
+    if (WIFI_Connection) {
         if (dataError) {
             // WiFi已连接但数据错误
             lv_obj_t * label = ui_wifi_status;
             lv_label_set_recolor(label, true);
             lv_label_set_text(label, "WiFi: #FF0000 DATA ERROR#");
-            ESP_LOGW(TAG, "WiFi connected but data error occurred");
+            ESP_LOGW(TAG, "WiFi已连接但数据获取错误");
         } else {
             // WiFi已连接且数据正常 - 颜色由闪烁定时器控制
             lv_label_set_text(ui_wifi_status, "WiFi");
             // 不在这里设置颜色，由wifi_blink_timer_cb处理
         }
-    } else if (WIFI_Connection && !WIFI_GotIP) {
-        // WiFi已连接但未获取IP
-        lv_label_set_text(ui_wifi_status, "WiFi: Getting IP");
-        lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFFFF00), LV_PART_MAIN | LV_STATE_DEFAULT);
-        ESP_LOGW(TAG, "WiFi connected but IP not obtained");
     } else {
         // WiFi断开连接
         lv_label_set_text(ui_wifi_status, "WiFi");
         lv_obj_set_style_text_color(ui_wifi_status, lv_color_hex(0xFF0000), LV_PART_MAIN | LV_STATE_DEFAULT);
-        ESP_LOGW(TAG, "WiFi disconnected");
+        ESP_LOGW(TAG, "WiFi断开连接");
     }
 }
 

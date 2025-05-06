@@ -36,9 +36,10 @@ bool IP_Scanner_CheckIP(const char* ip);
  * @brief 扫描指定网段内的所有IP
  * @param base_ip 基础IP地址前缀（例如："192.168.50."），必须提供有效的网段前缀
  * @param callback 扫描结果回调函数
+ * @param skip_validation 是否跳过已保存IP的验证（如果外部已经验证过）
  * @return esp_err_t ESP_OK表示成功，其他表示错误
  */
-esp_err_t IP_Scanner_ScanNetwork(const char* base_ip, ip_scan_callback_t callback);
+esp_err_t IP_Scanner_ScanNetwork(const char* base_ip, ip_scan_callback_t callback, bool skip_validation);
 
 /**
  * @brief 保存有效的IP地址到持久化存储
