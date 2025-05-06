@@ -158,8 +158,8 @@ static void wifi_status_timer_cb(lv_timer_t *timer) {
     static bool has_scanned = false;
     
     // 只记录当前WiFi连接状态，不再检查IP状态
-    ESP_LOGI(TAG, "WiFi状态检查 - 连接状态: %s", 
-             WIFI_Connection ? "已连接" : "未连接");
+    // ESP_LOGI(TAG, "WiFi状态检查 - 连接状态: %s", 
+    //          WIFI_Connection ? "已连接" : "未连接");
     
     PowerMonitor_UpdateWiFiStatus();
     
@@ -841,8 +841,8 @@ void PowerMonitor_UpdateUI(void) {
 // 更新UI上的WiFi状态
 void PowerMonitor_UpdateWiFiStatus(void) {
     // 输出当前WiFi状态的详细信息，不再检查IP状态
-    ESP_LOGI(TAG, "更新WiFi状态UI - 连接状态: %d, 数据错误: %d", 
-             WIFI_Connection, dataError);
+    // ESP_LOGI(TAG, "更新WiFi状态UI - 连接状态: %d, 数据错误: %d", 
+    //          WIFI_Connection, dataError);
     
     // 更新WiFi连接状态
     if (WIFI_Connection) {
