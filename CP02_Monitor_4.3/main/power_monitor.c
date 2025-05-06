@@ -424,6 +424,36 @@ static lv_color_t get_voltage_color(int voltage_mv)
     }
 }
 
+// 根据协议ID获取协议名称
+static const char* get_fc_protocol_name(uint8_t protocol)
+{
+    switch (protocol) {
+        case 0:  return "None";
+        case 1:  return "QC2";
+        case 2:  return "QC3";
+        case 3:  return "QC3+";
+        case 4:  return "SFCP";
+        case 5:  return "AFC";
+        case 6:  return "FCP";
+        case 7:  return "SCP";
+        case 8:  return "VOOC1.0";
+        case 9:  return "VOOC4.0";
+        case 10: return "SVOOC2.0";
+        case 11: return "TFCP";
+        case 12: return "UFCS";
+        case 13: return "PE1";
+        case 14: return "PE2";
+        case 15: return "PD_Fix5V";
+        case 16: return "PD_FixHV";
+        case 17: return "PD_SPR_AVS";
+        case 18: return "PD_PPS";
+        case 19: return "PD_EPR_HV";
+        case 20: return "PD_AVS";
+        case 0xff: return "未充电";
+        default: return "未知";
+    }
+}
+
 // 创建电源显示UI
 esp_err_t power_monitor_create_ui(void)
 {
@@ -835,8 +865,11 @@ void power_monitor_update_ui(void)
         // 更新端口标签颜色
         lv_obj_set_style_text_color(ui_port_labels[i], color, LV_PART_MAIN | LV_STATE_DEFAULT);
         
-        // 格式化并更新信息文本
-        sprintf(text_buf, "%.2fV  %.2fA  %.2fW", voltage_v, current_a, power_w);
+        // 获取充电协议名称
+        const char* protocol_name = get_fc_protocol_name(portInfos[i].fc_protocol);
+        
+        // 格式化并更新信息文本，添加协议信息
+        sprintf(text_buf, "%.1fV  %.1fA  %.2fW %s", voltage_v, current_a, power_w, protocol_name);
         lv_label_set_text(ui_power_values[i], text_buf);
         lv_obj_set_style_text_color(ui_power_values[i], color, LV_PART_MAIN | LV_STATE_DEFAULT);
         
