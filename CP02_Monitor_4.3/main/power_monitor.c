@@ -510,11 +510,17 @@ esp_err_t power_monitor_create_ui(void)
     int bar_height = 20;     // 条的高度
     int port_spacing = 55;   // 端口间距，从65减少到55以节省垂直空间
     
+    // 定义自定义顺序 - A口挪到C1~C4后面
+    int display_order[MAX_PORTS] = {1, 2, 3, 4, 0}; // 显示顺序：C1, C2, C3, C4, A
+    
     for (int i = 0; i < MAX_PORTS; i++) {
+        // 根据自定义顺序获取实际的端口索引
+        int port_idx = display_order[i];
+        
         // 创建端口标签
         ui_port_labels[i] = lv_label_create(power_container);
-        lv_label_set_text(ui_port_labels[i], portInfos[i].name);
-        lv_obj_set_style_text_color(ui_port_labels[i], get_voltage_color(portInfos[i].voltage), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_label_set_text(ui_port_labels[i], portInfos[port_idx].name);
+        lv_obj_set_style_text_color(ui_port_labels[i], get_voltage_color(portInfos[port_idx].voltage), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(ui_port_labels[i], &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_pos(ui_port_labels[i], 20, i * port_spacing + 12);
         
@@ -523,7 +529,7 @@ esp_err_t power_monitor_create_ui(void)
         sprintf(info_text, "0.00V  0.00A  0.00W");
         ui_power_values[i] = lv_label_create(power_container);
         lv_label_set_text(ui_power_values[i], info_text);
-        lv_obj_set_style_text_color(ui_power_values[i], get_voltage_color(portInfos[i].voltage), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(ui_power_values[i], get_voltage_color(portInfos[port_idx].voltage), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(ui_power_values[i], &cn_16, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_pos(ui_power_values[i], 80, i * port_spacing + 12);
         
@@ -886,21 +892,27 @@ void power_monitor_update_ui(void)
     // 在开始更新UI前添加短暂延迟
     vTaskDelay(1 / portTICK_PERIOD_MS);
     
+    // 定义自定义顺序 - A口挪到C1~C4后面
+    int display_order[MAX_PORTS] = {1, 2, 3, 4, 0}; // 显示顺序：C1, C2, C3, C4, A
+    
     // 更新端口数据
     for (int i = 0; i < MAX_PORTS; i++) {
+        // 根据自定义顺序获取实际的端口索引
+        int port_idx = display_order[i];
+        
         // 计算并格式化值
-        float power_w = portInfos[i].power;
-        float voltage_v = portInfos[i].voltage / 1000.0f; // 转换为V
-        float current_a = portInfos[i].current / 1000.0f; // 转换为A
+        float power_w = portInfos[port_idx].power;
+        float voltage_v = portInfos[port_idx].voltage / 1000.0f; // 转换为V
+        float current_a = portInfos[port_idx].current / 1000.0f; // 转换为A
         
         // 根据电压确定颜色
-        lv_color_t color = get_voltage_color(portInfos[i].voltage);
+        lv_color_t color = get_voltage_color(portInfos[port_idx].voltage);
         
         // 更新端口标签颜色
         lv_obj_set_style_text_color(ui_port_labels[i], color, LV_PART_MAIN | LV_STATE_DEFAULT);
         
         // 获取充电协议名称
-        const char* protocol_name = get_fc_protocol_name(portInfos[i].fc_protocol);
+        const char* protocol_name = get_fc_protocol_name(portInfos[port_idx].fc_protocol);
         
         // 格式化并更新信息文本，添加协议信息
         sprintf(text_buf, "%.1fV  %.1fA  %.2fW %s", voltage_v, current_a, power_w, protocol_name);
@@ -908,9 +920,9 @@ void power_monitor_update_ui(void)
         lv_obj_set_style_text_color(ui_power_values[i], color, LV_PART_MAIN | LV_STATE_DEFAULT);
         
         // 更新功率条的值（最大功率的百分比）
-        int percent = (int)((portInfos[i].power / MAX_PORT_WATTS) * 100);
+        int percent = (int)((portInfos[port_idx].power / MAX_PORT_WATTS) * 100);
         // 确保非零功率至少显示一些进度
-        if (portInfos[i].power > 0 && percent == 0) {
+        if (portInfos[port_idx].power > 0 && percent == 0) {
             percent = 1;
         }
         // 限制最大值为100
@@ -922,7 +934,7 @@ void power_monitor_update_ui(void)
         lv_bar_set_value(ui_power_arcs[i], percent, LV_ANIM_OFF);
         
         // 确保端口标签文本不变
-        lv_label_set_text(ui_port_labels[i], portInfos[i].name);
+        lv_label_set_text(ui_port_labels[i], portInfos[port_idx].name);
         
         // 每更新一个端口后添加短暂延迟
         vTaskDelay(1 / portTICK_PERIOD_MS);
