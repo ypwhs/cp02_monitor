@@ -4,6 +4,7 @@ idf_component_register(
                               "LCD_Driver/ST7789.c"
                               "LVGL_Driver/LVGL_Driver.c"
                               "Power_Monitor/Power_Monitor.c"
+                              "Power_Monitor/IP_Scanner.c"
                               "Wireless/Wireless.c"
 
                          INCLUDE_DIRS 

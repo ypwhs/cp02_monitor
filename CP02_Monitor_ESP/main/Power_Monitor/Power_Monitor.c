@@ -9,11 +9,13 @@
 #include "Power_Monitor.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "lwip/err.h"
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
+#include "IP_Scanner.h"
 
 // 标签用于日志
 static const char *TAG = "POWER_MONITOR";
@@ -55,16 +57,112 @@ static bool startup_animation_completed = false;
 // 添加一个全局变量来记录上次请求的时间戳
 static uint32_t last_data_fetch_time = 0;
 
+// 修改全局变量声明
+static char current_data_url[64] = {0};  // 用于存储当前使用的URL
+
+// 扫描回调函数 - 当找到设备时记录
+static void scan_result_callback(const char* ip, bool success) {
+    if (success) {
+        ESP_LOGI(TAG, "====================================================");
+        ESP_LOGI(TAG, "       发现小电拼设备: %s", ip);
+        ESP_LOGI(TAG, "====================================================");
+        
+        // 更新当前数据URL为新发现的设备
+        char new_url[64] = {0};
+        snprintf(new_url, sizeof(new_url), "http://%s/metrics", ip);
+        
+        // 检查URL是否发生变化
+        if (strcmp(current_data_url, new_url) != 0) {
+            ESP_LOGI(TAG, "数据URL已更新:");
+            ESP_LOGI(TAG, "  旧URL: %s", current_data_url);
+            ESP_LOGI(TAG, "  新URL: %s", new_url);
+            
+            // 更新URL
+            strncpy(current_data_url, new_url, sizeof(current_data_url) - 1);
+        } else {
+            ESP_LOGI(TAG, "数据URL未变: %s", current_data_url);
+        }
+    }
+}
+
+// 从IP地址提取网段前缀
+static bool extract_network_prefix(const char* ip, char* prefix_buffer, size_t buffer_size) {
+    if (!ip || !prefix_buffer || buffer_size < 16) {
+        ESP_LOGE(TAG, "无效的参数");
+        return false;
+    }
+    
+    // 提取网段前缀 (例如: 从"192.168.1.100"提取"192.168.1.")
+    const char* last_dot = strrchr(ip, '.');
+    if (!last_dot) {
+        ESP_LOGE(TAG, "IP格式无效: %s", ip);
+        return false;
+    }
+    
+    size_t prefix_len = last_dot - ip + 1;
+    if (prefix_len >= buffer_size) {
+        ESP_LOGE(TAG, "缓冲区太小");
+        return false;
+    }
+    
+    memcpy(prefix_buffer, ip, prefix_len);
+    prefix_buffer[prefix_len] = '\0';
+    
+    ESP_LOGI(TAG, "提取的网段前缀: %s", prefix_buffer);
+    return true;
+}
+
 // 修改 wifi_status_timer_cb 函数，只有在动画完成后才开始监控
 static void wifi_status_timer_cb(lv_timer_t *timer) {
+    static bool has_scanned = false;
     PowerMonitor_UpdateWiFiStatus();
     
-    // 如果WiFi连接成功且已获取IP地址，并且启动动画已完成，且刷新定时器还未创建，则创建刷新定时器
-    if (WIFI_Connection && WIFI_GotIP && startup_animation_completed && refresh_timer == NULL) {
-        ESP_LOGI(TAG, "WiFi connected and IP obtained, starting power monitoring");
-        ESP_LOGI(TAG, "Monitoring data from URL: %s", DATA_URL);
-        refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
-        ESP_LOGI(TAG, "Refresh timer created with interval: %d ms", REFRESH_INTERVAL);
+    // 如果WiFi连接成功且已获取IP地址
+    if (WIFI_Connection && WIFI_GotIP) {
+        // 如果启动动画已完成且刷新定时器还未创建，则创建刷新定时器
+        if (startup_animation_completed && refresh_timer == NULL) {
+            ESP_LOGI(TAG, "WiFi connected and IP obtained, starting power monitoring");
+            ESP_LOGI(TAG, "Monitoring data from URL: %s", current_data_url);
+            refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
+            ESP_LOGI(TAG, "Refresh timer created with interval: %d ms", REFRESH_INTERVAL);
+        }
+        
+        // 如果尚未进行扫描，且动画已完成，则进行网络扫描
+        if (!has_scanned && startup_animation_completed) {
+            ESP_LOGI(TAG, "WiFi connected and IP obtained, starting network scan");
+            
+            // 获取当前IP地址
+            esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+            if (netif != NULL) {
+                esp_netif_ip_info_t ip_info;
+                char self_ip[16] = {0};
+                char network_prefix[16] = {0};
+                
+                if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+                    sprintf(self_ip, IPSTR, IP2STR(&ip_info.ip));
+                    ESP_LOGI(TAG, "Current device IP: %s", self_ip);
+                    
+                    // 提取网段前缀
+                    if (extract_network_prefix(self_ip, network_prefix, sizeof(network_prefix))) {
+                        // 开始扫描网络
+                        ESP_LOGI(TAG, "===========================");
+                        ESP_LOGI(TAG, "开始扫描网段: %s* 寻找小电拼设备", network_prefix);
+                        ESP_LOGI(TAG, "===========================");
+                        
+                        // 记录扫描前的URL
+                        ESP_LOGI(TAG, "扫描前的数据URL: %s", current_data_url);
+                        
+                        IP_Scanner_ScanNetwork(network_prefix, scan_result_callback);
+                        
+                        // 记录扫描后的URL，看是否有变化
+                        ESP_LOGI(TAG, "扫描后的数据URL: %s", current_data_url);
+                        has_scanned = true;
+                    }
+                }
+            } else {
+                ESP_LOGE(TAG, "Failed to get network interface handle");
+            }
+        }
     }
 }
 
@@ -224,6 +322,22 @@ void PowerMonitor_Init(void) {
     // 初始化数据获取时间戳
     last_data_fetch_time = esp_log_timestamp();
     
+    // 从NVS加载保存的IP地址
+    char saved_ip[32] = {0};
+    if (IP_Scanner_LoadIP(saved_ip, sizeof(saved_ip))) {
+        snprintf(current_data_url, sizeof(current_data_url), "http://%s/metrics", saved_ip);
+        ESP_LOGI(TAG, "Using saved IP for data URL: %s", current_data_url);
+    } else {
+        // 如果无法加载保存的IP，使用默认URL
+        strncpy(current_data_url, DATA_URL, sizeof(current_data_url) - 1);
+        ESP_LOGW(TAG, "Using default data URL: %s", current_data_url);
+    }
+    
+    // 打印明显的数据URL信息，方便调试
+    ESP_LOGI(TAG, "============================================");
+    ESP_LOGI(TAG, "电源监控数据将从以下URL获取: %s", current_data_url);
+    ESP_LOGI(TAG, "============================================");
+    
     // 初始化端口信息
     for (int i = 0; i < MAX_PORTS; i++) {
         portInfos[i].id = i;
@@ -369,7 +483,7 @@ void PowerMonitor_FetchData(void) {
     if (client == NULL) {
         // 创建HTTP客户端配置
         esp_http_client_config_t config = {
-            .url = DATA_URL,
+            .url = current_data_url,  // 使用当前URL
             .event_handler = http_event_handler,
             .timeout_ms = 1000,  // 减少超时时间
             .buffer_size = 4096,
