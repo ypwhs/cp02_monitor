@@ -37,6 +37,7 @@ static bool dataError = false;         // 数据错误标志
 // HTTP客户端句柄
 static esp_http_client_handle_t client = NULL;
 static uint32_t last_data_fetch_time = 0;
+static int consecutive_errors = 0;  // 新增：连续错误计数器
 
 // UI组件
 static lv_obj_t *ui_screen;
@@ -225,6 +226,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 {
     static char *output_buffer;
     static int  output_len;
+    static bool buffer_overflow_reported = false; // 避免重复报告缓冲区溢出
     
     switch(evt->event_id) {
         case HTTP_EVENT_ERROR:
@@ -238,17 +240,13 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
             }
             output_buffer = NULL;
             output_len = 0;
-            
-            // 连接成功后添加短暂延迟
-            vTaskDelay(1 / portTICK_PERIOD_MS);
+            buffer_overflow_reported = false; // 重置溢出报告标志
             break;
             
         case HTTP_EVENT_HEADER_SENT:
             break;
             
         case HTTP_EVENT_ON_HEADER:
-            // 处理头部时让出CPU时间
-            vTaskDelay(1 / portTICK_PERIOD_MS);
             break;
             
         case HTTP_EVENT_ON_DATA:
@@ -256,7 +254,6 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
             if (evt->data_len > 0) {
                 // 第一次收到数据，需要分配内存
                 if (output_buffer == NULL) {
-                    // 初始分配8KB缓冲区，足够大多数请求
                     int initial_size = 8192;
                     output_buffer = (char *)malloc(initial_size);
                     if (output_buffer == NULL) {
@@ -266,21 +263,24 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
                     output_len = 0;
                 }
                 
-                // 检查是否需要扩展缓冲区
-                size_t new_size = output_len + evt->data_len + 1; // +1 for null terminator
-                output_buffer = (char *)realloc(output_buffer, new_size);
-                if (output_buffer == NULL) {
-                    ESP_LOGE(TAG, "无法为输出缓冲区重新分配内存");
-                    return ESP_FAIL;
-                }
-                
-                // 复制数据到缓冲区
-                memcpy(output_buffer + output_len, evt->data, evt->data_len);
-                output_len += evt->data_len;
-                
-                // 收到大量数据时让出CPU时间
-                if (evt->data_len > 1024) {
-                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                // 检查缓冲区是否足够大
+                if (output_len + evt->data_len + 1 > 8192) {
+                    // 数据太大，截断处理
+                    if (!buffer_overflow_reported) {
+                        ESP_LOGW(TAG, "数据过大(>8KB)，进行截断处理");
+                        buffer_overflow_reported = true; // 设置标志，避免重复日志
+                    }
+                    
+                    // 只复制能容纳的部分数据
+                    int copy_len = 8192 - output_len - 1;
+                    if (copy_len > 0) {
+                        memcpy(output_buffer + output_len, evt->data, copy_len);
+                        output_len = 8192 - 1;
+                    }
+                } else {
+                    // 复制数据到缓冲区
+                    memcpy(output_buffer + output_len, evt->data, evt->data_len);
+                    output_len += evt->data_len;
                 }
             }
             break;
@@ -288,10 +288,6 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
         case HTTP_EVENT_ON_FINISH:
             if (output_buffer != NULL && output_len > 0) {
                 output_buffer[output_len] = '\0';
-                
-                // 解析数据前添加短暂延迟
-                vTaskDelay(1 / portTICK_PERIOD_MS);
-                
                 power_monitor_parse_data(output_buffer);
                 free(output_buffer);
             } else {
@@ -299,6 +295,7 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
             }
             output_buffer = NULL;
             output_len = 0;
+            buffer_overflow_reported = false;
             break;
             
         case HTTP_EVENT_DISCONNECTED:
@@ -306,16 +303,13 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
                 // 如果断开连接时已经收到数据，尝试处理
                 if (output_len > 0) {
                     output_buffer[output_len] = '\0';
-                    
-                    // 在断开连接后处理数据前添加短暂延迟
-                    vTaskDelay(1 / portTICK_PERIOD_MS);
-                    
                     power_monitor_parse_data(output_buffer);
                 }
                 free(output_buffer);
                 output_buffer = NULL;
             }
             output_len = 0;
+            buffer_overflow_reported = false;
             break;
             
         default:
@@ -649,6 +643,7 @@ esp_err_t power_monitor_fetch_data(void)
 {
     static esp_http_client_handle_t client = NULL;
     uint32_t current_time = esp_log_timestamp();
+    static uint32_t last_error_time = 0;
     
     // 确保请求间隔大于刷新间隔
     if (current_time - last_data_fetch_time < local_refresh_interval) {
@@ -660,16 +655,25 @@ esp_err_t power_monitor_fetch_data(void)
         return ESP_ERR_WIFI_NOT_CONNECT;
     }
     
+    // 检查距离上次错误的时间，如果太短，可能网络还未恢复
+    if (last_error_time > 0 && current_time - last_error_time < 1000) {
+        ESP_LOGI(TAG, "上次错误后间隔太短，延迟请求");
+        return ESP_ERR_NOT_FINISHED;
+    }
+    
     // 每次调用时检查客户端是否已初始化
     if (client == NULL) {
         // 创建HTTP客户端配置
         esp_http_client_config_t config = {
             .url = local_data_url,
             .event_handler = http_event_handler,
-            .timeout_ms = 5000,  // 增加超时时间到5秒
-            .buffer_size = 4096,
-            .disable_auto_redirect = true, // 禁用自动重定向
-            .skip_cert_common_name_check = true, // 跳过证书检查
+            .timeout_ms = 2000,        // 调整超时时间到2秒
+            .buffer_size = 4096,       // 增加缓冲区大小
+            .disable_auto_redirect = true,
+            .skip_cert_common_name_check = true,
+            .use_global_ca_store = false,
+            .keep_alive_enable = false, // 每次请求后关闭连接
+            .is_async = false,         // 同步请求
         };
         
         client = esp_http_client_init(&config);
@@ -682,16 +686,14 @@ esp_err_t power_monitor_fetch_data(void)
         esp_http_client_set_method(client, HTTP_METHOD_GET);
         esp_http_client_set_header(client, "Accept", "text/plain");
         esp_http_client_set_header(client, "User-Agent", "ESP32-HTTP-Client");
+        esp_http_client_set_header(client, "Connection", "close"); 
         
-        // 初始化HTTP客户端可能耗时，添加短暂延迟
-        vTaskDelay(1 / portTICK_PERIOD_MS);
+        // 初始化后添加一些延迟来确保网络就绪
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
     
     // 记录请求开始时间
     last_data_fetch_time = current_time;
-    
-    // 在HTTP请求前添加短暂延迟，让UI任务有时间处理事件
-    vTaskDelay(1 / portTICK_PERIOD_MS);
     
     // 执行HTTP请求
     esp_err_t err = esp_http_client_perform(client);
@@ -701,40 +703,34 @@ esp_err_t power_monitor_fetch_data(void)
         
         if (status_code == 200) {
             dataError = false;  // 重置数据错误标志
+            consecutive_errors = 0;  // 重置连续错误计数
+            last_error_time = 0;     // 清除上次错误时间
         } else {
             dataError = true;   // 设置数据错误标志
-            ESP_LOGE(TAG, "HTTP GET请求失败，状态码: %d", status_code);
+            consecutive_errors++;  // 增加连续错误计数
+            last_error_time = current_time; // 记录错误时间
+            ESP_LOGE(TAG, "HTTP GET请求失败，状态码: %d (连续错误: %d)", status_code, consecutive_errors);
         }
     } else {
         dataError = true;   // 设置数据错误标志
-        ESP_LOGE(TAG, "HTTP GET请求失败: %s (错误码: %d)", esp_err_to_name(err), err);
+        consecutive_errors++;  // 增加连续错误计数
+        last_error_time = current_time; // 记录错误时间
+        ESP_LOGE(TAG, "HTTP GET请求失败: %s (错误码: %d, 连续错误: %d)", esp_err_to_name(err), err, consecutive_errors);
         
-        // 如果是连接错误，不立即释放客户端，而是执行重试策略
-        if (err == ESP_ERR_HTTP_FETCH_HEADER || err == ESP_ERR_HTTP_CONNECTING) {
-            ESP_LOGI(TAG, "HTTP连接失败，将在下次尝试重连");
-            // 仅在多次失败后才重置客户端
-            static int retry_count = 0;
-            retry_count++;
-            
-            if (retry_count > 5) {
-                ESP_LOGI(TAG, "多次连接失败，重置HTTP客户端");
-                esp_http_client_cleanup(client);
-                client = NULL;
-                retry_count = 0;
-            }
-        } else {
-            // 其他错误，清理并重置客户端
-            ESP_LOGI(TAG, "HTTP请求错误，重置客户端");
-            esp_http_client_cleanup(client);
-            client = NULL;
-        }
+        // 每次错误后都重置HTTP客户端
+        ESP_LOGI(TAG, "错误发生，重置HTTP客户端");
+        esp_http_client_cleanup(client);
+        client = NULL;
+        
+        // 添加额外延迟以便网络恢复
+        vTaskDelay(150 / portTICK_PERIOD_MS);
     }
     
     // 更新WiFi状态以反映数据错误
     power_monitor_update_wifi_status();
     
-    // 让出CPU时间
-    vTaskDelay(1);
+    // 让出更多CPU时间给其他任务
+    vTaskDelay(10 / portTICK_PERIOD_MS);
     
     return err;
 }
@@ -751,17 +747,26 @@ void power_monitor_parse_data(char* payload)
     // 重置总功率
     totalPower = 0.0f;
     
+    // 创建副本进行解析，避免修改原始数据
+    char* payload_copy = strdup(payload);
+    if (payload_copy == NULL) {
+        ESP_LOGE(TAG, "无法为数据创建副本，内存不足");
+        return;
+    }
+    
     // 让出CPU时间，避免长时间解析数据导致UI卡顿
     vTaskDelay(1 / portTICK_PERIOD_MS);
     
     // 逐行解析数据
-    char* line = strtok(payload, "\n");
+    char* saveptr = NULL;
+    char* line = strtok_r(payload_copy, "\n", &saveptr);
     int lineCount = 0;
-    while (line != NULL) {
+    
+    while (line != NULL && lineCount < 1000) {  // 添加行数限制，防止无限循环
         lineCount++;
         
-        // 每解析10行数据，让出一次CPU时间
-        if (lineCount % 10 == 0) {
+        // 每解析20行数据，让出一次CPU时间
+        if (lineCount % 20 == 0) {
             vTaskDelay(1 / portTICK_PERIOD_MS);
         }
         
@@ -772,6 +777,7 @@ void power_monitor_parse_data(char* payload)
             char* idEnd = strchr(idStart, '"');
             if (idEnd == NULL) {
                 ESP_LOGW(TAG, "电流行格式无效: %s", line);
+                line = strtok_r(NULL, "\n", &saveptr);
                 continue;
             }
             
@@ -782,6 +788,7 @@ void power_monitor_parse_data(char* payload)
             char* valueStart = strchr(idEnd + 1, '}') + 1;
             if (valueStart == NULL) {
                 ESP_LOGW(TAG, "电流值格式无效: %s", line);
+                line = strtok_r(NULL, "\n", &saveptr);
                 continue;
             }
             
@@ -799,6 +806,7 @@ void power_monitor_parse_data(char* payload)
             char* idEnd = strchr(idStart, '"');
             if (idEnd == NULL) {
                 ESP_LOGW(TAG, "电压行格式无效: %s", line);
+                line = strtok_r(NULL, "\n", &saveptr);
                 continue;
             }
             
@@ -809,6 +817,7 @@ void power_monitor_parse_data(char* payload)
             char* valueStart = strchr(idEnd + 1, '}') + 1;
             if (valueStart == NULL) {
                 ESP_LOGW(TAG, "电压值格式无效: %s", line);
+                line = strtok_r(NULL, "\n", &saveptr);
                 continue;
             }
             
@@ -819,43 +828,13 @@ void power_monitor_parse_data(char* payload)
                 portInfos[portId].voltage = voltage;
             }
         }
-        // 解析状态数据
-        else if (strncmp(line, "ionbridge_port_state{id=", 24) == 0) {
-            // 提取端口ID
-            char* idStart = strchr(line, '"') + 1;
-            char* idEnd = strchr(idStart, '"');
-            *idEnd = '\0';
-            int portId = atoi(idStart);
-            
-            // 提取状态值
-            char* valueStart = strchr(idEnd + 1, '}') + 1;
-            int state = atoi(valueStart);
-            
-            // 更新端口状态
-            if (portId >= 0 && portId < MAX_PORTS) {
-                portInfos[portId].state = state;
-            }
-        }
-        // 解析协议数据
-        else if (strncmp(line, "ionbridge_port_fc_protocol{id=", 30) == 0) {
-            // 提取端口ID
-            char* idStart = strchr(line, '"') + 1;
-            char* idEnd = strchr(idStart, '"');
-            *idEnd = '\0';
-            int portId = atoi(idStart);
-            
-            // 提取协议值
-            char* valueStart = strchr(idEnd + 1, '}') + 1;
-            int protocol = atoi(valueStart);
-            
-            // 更新端口协议
-            if (portId >= 0 && portId < MAX_PORTS) {
-                portInfos[portId].fc_protocol = protocol;
-            }
-        }
         
-        line = strtok(NULL, "\n");
+        // 获取下一行
+        line = strtok_r(NULL, "\n", &saveptr);
     }
+    
+    // 释放副本内存
+    free(payload_copy);
     
     // 再次让出CPU时间，避免计算功率导致UI卡顿
     vTaskDelay(1 / portTICK_PERIOD_MS);
