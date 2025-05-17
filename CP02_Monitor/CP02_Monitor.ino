@@ -34,7 +34,7 @@
 // 电源监控配置
 const int MAX_POWER_WATTS = 160;    // 最大总功率 180W
 const int MAX_PORT_WATTS = 140;     // 每个端口最大功率 140W
-const char* DATA_URL = "http://10.10.168.168/metrics";  // 修改成你的小电拼IP，后面的 /metrics 保留不变
+const char* DATA_URL = "http://192.168.1.19/metrics";  // 修改成你的小电拼IP，后面的 /metrics 保留不变
 const int REFRESH_INTERVAL = 500;   // 刷新间隔 (ms)
 
 // 任务计时器

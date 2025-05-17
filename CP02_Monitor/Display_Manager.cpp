@@ -38,7 +38,7 @@ void DisplayManager::createAPScreenContent(const char* ssid, const char* ip) {
     lv_label_set_text(title, "WiFi Setup");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);  // 顶部居中
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
     
     // 创建容器来组织内容
     lv_obj_t* cont = lv_obj_create(apScreen);
@@ -182,7 +182,7 @@ void DisplayManager::createWiFiErrorScreen() {
     lv_obj_t* title = lv_label_create(wifiErrorScreen);
     lv_label_set_text(title, "WiFi Connection Failed");
     lv_obj_set_style_text_color(title, lv_color_make(0xFF, 0x00, 0x00), 0);  // 红色
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 30);
     
     // 创建提示信息
