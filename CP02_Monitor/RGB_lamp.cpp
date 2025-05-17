@@ -2,6 +2,7 @@
 
 uint16_t Time = 0;
 uint16_t Number = 0;
+bool isRGBRunning = false;  // 添加运行状态标志
 uint8_t RGB_Data[192][3] = {
   {64, 1, 0},  {63, 2, 0},  {62, 3, 0},  {61, 4, 0},  {60, 5, 0},  {59, 6, 0},  {58, 7, 0},  {57, 8, 0},
   {56, 9, 0},  {55, 10, 0}, {54, 11, 0}, {53, 12, 0}, {52, 13, 0}, {51, 14, 0}, {50, 15, 0}, {49, 16, 0},
@@ -31,18 +32,30 @@ uint8_t RGB_Data[192][3] = {
   {57, 0, 8},  {58, 0, 7},  {59, 0, 6},  {60, 0, 5},  {61, 0, 4},  {62, 0, 3},  {63, 0, 2},  {64, 0, 1}
 };
 // data range -> Red:0~255  Green:0~255  Blue:0~255
-void Set_Color(uint8_t Red,uint8_t Green,uint8_t Blue)                                            // Set RGB bead color
-{
-  neopixelWrite(PIN_NEOPIXEL, Red, Green, Blue);  
+void Set_Color(uint8_t Red, uint8_t Green, uint8_t Blue) {
+    neopixelWrite(PIN_NEOPIXEL, Red, Green, Blue);
 }
 void RGB_Lamp_Loop(uint16_t Waiting)
 { 
-  Time++;
-  if(Time == Waiting){
+    if (!isRGBRunning) {
+        isRGBRunning = true;
+        // 首次启动时立即显示颜色
+        Set_Color(RGB_Data[Number][0]*3, RGB_Data[Number][1]*3, RGB_Data[Number][2]*3);
+    }
+    
+    Time++;
+    if (Time >= Waiting) {
+        Time = 0;
+        Number++;
+        if (Number >= 192) {
+            Number = 0;
+        }
+        Set_Color(RGB_Data[Number][0]*3, RGB_Data[Number][1]*3, RGB_Data[Number][2]*3);
+    }
+}
+void RGB_Lamp_Off() {
+    isRGBRunning = false;
     Time = 0;
-    Number++;
-    if(Number == 192)
-      Number = 0;
-    Set_Color( RGB_Data[Number][0]*3, RGB_Data[Number][1]*3, RGB_Data[Number][2]*3);  // Color
-  }
+    Number = 0;
+    Set_Color(0, 0, 0);  // 设置RGB颜色为黑色（关闭）
 }

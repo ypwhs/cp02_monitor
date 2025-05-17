@@ -33,9 +33,18 @@ typedef struct {
     const char* name;          // 端口名称
 } PortInfo;
 
+// 数据结构体
+struct PowerData {
+    String payload;
+    bool isValid;
+};
+
 // 所有端口信息
 extern PortInfo portInfos[MAX_PORTS];
 extern float totalPower;
+
+// 数据获取任务句柄
+extern TaskHandle_t monitorTaskHandle;  // 监控任务句柄
 
 // 初始化功率监控
 void PowerMonitor_Init();
@@ -43,19 +52,19 @@ void PowerMonitor_Init();
 // 创建功率显示界面
 void PowerMonitor_CreateUI();
 
-// 从网络获取数据
-void PowerMonitor_FetchData();
+// 监控任务（数据获取、解析和UI更新）
+void PowerMonitor_Task(void* parameter);
 
-// 解析数据
-void PowerMonitor_ParseData(String payload);
+// 启动监控任务
+void PowerMonitor_Start();
+
+// 停止监控任务
+void PowerMonitor_Stop();
 
 // 更新UI
 void PowerMonitor_UpdateUI();
 
 // 更新WiFi状态
 void PowerMonitor_UpdateWiFiStatus();
-
-// 定时器回调
-void PowerMonitor_TimerCallback(lv_timer_t *timer);
 
 #endif /* POWER_MONITOR_H */ 

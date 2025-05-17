@@ -82,8 +82,3 @@ void Lvgl_Init(void)
   esp_timer_start_periodic(lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000);
 
 }
-void Timer_Loop(void)
-{
-  lv_timer_handler(); /* let the GUI do its work */
-  // delay( 5 );
-}
