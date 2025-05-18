@@ -18,7 +18,6 @@ extern bool WIFI_Connection;  // WiFi连接状态
 extern int8_t WiFi_RSSI;      // WiFi信号强度
 
 void Wireless_Init(void);
-void WIFI_Init(void *arg);
 uint16_t WIFI_Scan(void);
 
 // WiFi连接功能

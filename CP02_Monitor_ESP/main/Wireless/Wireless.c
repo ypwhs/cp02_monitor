@@ -57,6 +57,10 @@ static void Initialize_WiFi(void) {
         // 确保netif创建成功
         assert(sta_netif != NULL);
         
+        // 同时创建AP接口，以便后续设置AP模式
+        esp_netif_t *ap_netif = esp_netif_create_default_wifi_ap();
+        assert(ap_netif != NULL);
+        
         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
         ESP_ERROR_CHECK(esp_wifi_init(&cfg));
         
@@ -82,25 +86,13 @@ void Wireless_Init(void)
     }
     ESP_ERROR_CHECK(ret);
     
-    // 创建WiFi初始化任务
-    xTaskCreatePinnedToCore(
-        WIFI_Init, 
-        "WIFI task",
-        8192, 
-        NULL, 
-        1, 
-        NULL, 
-        0);
-}
-
-void WIFI_Init(void *arg)
-{
-    Initialize_WiFi();  // 确保WiFi已初始化
+    // 同步初始化WiFi
+    ESP_LOGI("WIFI", "开始同步初始化WiFi");
+    Initialize_WiFi();  // 直接调用WiFi初始化函数
     
+    // 执行WiFi扫描
     WIFI_NUM = WIFI_Scan();
     ESP_LOGI("WIFI", "找到WiFi: %d", WIFI_NUM);
-    
-    vTaskDelete(NULL);
 }
 
 uint16_t WIFI_Scan(void)

@@ -5,6 +5,8 @@ idf_component_register(
                               "LVGL_Driver/LVGL_Driver.c"
                               "Power_Monitor/Power_Monitor.c"
                               "Wireless/Wireless.c"
+                              "ConfigManager/ConfigManager.c"
+                              "ConfigManager/Display_Manager.c"
 
                          INCLUDE_DIRS 
                               "./LCD_Driver/Vernon_ST7789T" 
@@ -12,5 +14,6 @@ idf_component_register(
                               "./LVGL_Driver" 
                               "./Power_Monitor"
                               "./Wireless"
+                              "./ConfigManager"
                               "."
                        )

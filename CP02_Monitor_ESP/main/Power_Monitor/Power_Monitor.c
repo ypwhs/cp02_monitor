@@ -14,6 +14,7 @@
 #include "lwip/sys.h"
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
+#include "ConfigManager.h"  // 添加ConfigManager.h引用
 
 // 标签用于日志
 static const char *TAG = "POWER_MONITOR";
@@ -61,8 +62,9 @@ static void wifi_status_timer_cb(lv_timer_t *timer) {
     
     // 如果WiFi连接成功且已获取IP地址，并且启动动画已完成，且刷新定时器还未创建，则创建刷新定时器
     if (WIFI_Connection && WIFI_GotIP && startup_animation_completed && refresh_timer == NULL) {
+        char *url = config_manager_get_monitor_url();  // 使用ConfigManager获取URL
         ESP_LOGI(TAG, "WiFi connected and IP obtained, starting power monitoring");
-        ESP_LOGI(TAG, "Monitoring data from URL: %s", DATA_URL);
+        ESP_LOGI(TAG, "Monitoring data from URL: %s", url);
         refresh_timer = lv_timer_create(PowerMonitor_TimerCallback, REFRESH_INTERVAL, NULL);
         ESP_LOGI(TAG, "Refresh timer created with interval: %d ms", REFRESH_INTERVAL);
     }
@@ -367,9 +369,12 @@ void PowerMonitor_FetchData(void) {
     
     // 每次调用时检查客户端是否已初始化
     if (client == NULL) {
+        // 获取监控URL
+        char *url = config_manager_get_monitor_url();  // 使用ConfigManager获取URL
+        
         // 创建HTTP客户端配置
         esp_http_client_config_t config = {
-            .url = DATA_URL,
+            .url = url,
             .event_handler = http_event_handler,
             .timeout_ms = 1000,  // 减少超时时间
             .buffer_size = 4096,
@@ -383,14 +388,14 @@ void PowerMonitor_FetchData(void) {
             return;
         }
         
-        // 设置请求头
+        // 设置请求头 - 去除不必要的头部
         esp_http_client_set_method(client, HTTP_METHOD_GET);
+        // 只保留最基本的头部，避免头部过大
         esp_http_client_set_header(client, "Accept", "text/plain");
-        esp_http_client_set_header(client, "User-Agent", "ESP32-HTTP-Client");
+        // 移除User-Agent头部
     }
     
     // 记录请求开始时间
-    // ESP_LOGI(TAG, "Fetching data from %s (after %d ms)", DATA_URL, (int)(current_time - last_data_fetch_time));
     last_data_fetch_time = current_time;
 
     // 执行非阻塞HTTP请求

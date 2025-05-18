@@ -8,6 +8,8 @@
 #include "Wireless.h"
 #include "LVGL_Driver.h"
 #include "Power_Monitor.h"
+#include "ConfigManager.h"
+#include "Display_Manager.h"
 #include "esp_log.h"
 #include "esp_pm.h"
 #include "freertos/FreeRTOS.h"
@@ -15,23 +17,15 @@
 
 static const char *TAG = "CP02_MAIN";
 
-// WiFi配置
-const char* WIFI_SSID = "Apple";          // 填写你的WiFi名称
-const char* WIFI_PASSWORD = "88888888";   // 填写你的WiFi密码
-
 // 电源监控配置
 const int MAX_POWER_WATTS = 160;    // 最大总功率 160W
 const int MAX_PORT_WATTS = 140;     // 每个端口最大功率 140W
-const char* DATA_URL = "http://192.168.1.19/metrics";  // 修改成你的小电拼IP
+const char* DATA_URL = "http://192.168.32.2/metrics";  // 默认监控URL，实际将从配置中获取
 const int REFRESH_INTERVAL = 500;   // 刷新间隔 (ms)
 
 void app_main(void)
 {
     ESP_LOGI(TAG, "CP02 Monitor application starting...");
-    
-    // 连接WiFi - 此函数内部会确保WiFi初始化
-    ESP_LOGI(TAG, "Connecting to WiFi...");
-    WiFi_Connect(WIFI_SSID, WIFI_PASSWORD);
     
     // 初始化LCD显示器
     ESP_LOGI(TAG, "Initializing LCD display");
@@ -42,9 +36,23 @@ void app_main(void)
     ESP_LOGI(TAG, "Initializing LVGL");
     LVGL_Init();
     
-    // 初始化功率监控
-    ESP_LOGI(TAG, "Initializing Power Monitor");
-    PowerMonitor_Init();
+    // 初始化显示管理器
+    ESP_LOGI(TAG, "Initializing Display Manager");
+    display_manager_init();
+    
+    // 初始化无线功能
+    ESP_LOGI(TAG, "Initializing Wireless");
+    Wireless_Init();
+    
+    // 初始化配置管理器
+    ESP_LOGI(TAG, "Initializing Config Manager");
+    config_manager_init();
+    
+    // 初始化功率监控（如果配置完成）
+    if (config_manager_is_configured()) {
+        ESP_LOGI(TAG, "Initializing Power Monitor");
+        PowerMonitor_Init();
+    }
 
     #if CONFIG_PM_ENABLE
     // Configure dynamic frequency scaling:
@@ -66,5 +74,8 @@ void app_main(void)
         // LVGL定时器处理函数，需要定期调用
         vTaskDelay(pdMS_TO_TICKS(10));
         lv_timer_handler();
+        
+        // 处理配置管理器
+        config_manager_handle();
     }
 }
