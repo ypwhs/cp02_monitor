@@ -104,7 +104,7 @@ void RGB_Off(void) {
 
 // RGB循环动画
 void RGB_Loop(int step_count) {
-    ESP_LOGI(TAG, "Running RGB loop animation for %d steps", step_count);
+    // ESP_LOGI(TAG, "Running RGB loop animation for %d steps", step_count);
     static uint8_t i = 0;
     
     for (int j = 0; j < step_count; j++) {
