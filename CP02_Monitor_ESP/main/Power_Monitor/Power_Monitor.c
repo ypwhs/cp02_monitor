@@ -377,7 +377,7 @@ void PowerMonitor_FetchData(void) {
             .url = url,
             .event_handler = http_event_handler,
             .timeout_ms = 1000,  // 减少超时时间
-            .buffer_size = 8192, // 增加缓冲区大小为8KB
+            .buffer_size = 2048,
             .disable_auto_redirect = true, // 禁用自动重定向
             .skip_cert_common_name_check = true, // 跳过证书检查
         };
@@ -394,6 +394,9 @@ void PowerMonitor_FetchData(void) {
         esp_http_client_set_header(client, "Accept", "text/plain");
         // 移除其他非必要的头部
         esp_http_client_set_header(client, "User-Agent", NULL);
+        esp_http_client_set_header(client, "Connection", NULL);
+        esp_http_client_set_header(client, "Accept-Encoding", NULL);
+        esp_http_client_set_header(client, "Accept-Language", NULL);
     }
     
     // 记录请求开始时间
