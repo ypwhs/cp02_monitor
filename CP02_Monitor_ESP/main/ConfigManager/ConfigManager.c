@@ -249,13 +249,13 @@ void config_manager_start_portal(void) {
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         config.lru_purge_enable = true;
         config.max_uri_handlers = 10;
-        config.max_resp_headers = 8;
+        config.max_resp_headers = 64;  // 增加响应头数量
         config.max_open_sockets = 7;
         config.recv_wait_timeout = 10;
         config.send_wait_timeout = 10;
         config.uri_match_fn = httpd_uri_match_wildcard;
         // 增加请求处理buffer大小来处理更大的请求
-        config.stack_size = 16384;  // 增加栈大小
+        config.stack_size = 32768;     // 增加栈大小
         config.server_port = 80;
         
         // 启动HTTP服务器
