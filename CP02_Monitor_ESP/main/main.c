@@ -10,6 +10,7 @@
 #include "Power_Monitor.h"
 #include "ConfigManager.h"
 #include "Display_Manager.h"
+#include "RGB/RGB.h"
 #include "esp_log.h"
 #include "esp_pm.h"
 #include "freertos/FreeRTOS.h"
@@ -69,7 +70,9 @@ void app_main(void)
 #endif // CONFIG_PM_ENABLE
 
     ESP_LOGI(TAG, "Initialization complete");
+    
     // 主循环
+    uint32_t last_rgb_update = 0;
     while (1) {
         // LVGL定时器处理函数，需要定期调用
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -77,5 +80,12 @@ void app_main(void)
         
         // 处理配置管理器
         config_manager_handle();
+        
+        // 处理RGB灯更新
+        uint32_t current_time = esp_log_timestamp();
+        if (current_time - last_rgb_update >= 50 && config_manager_is_rgb_enabled()) {
+            RGB_Loop(1);  // 每次更新一步
+            last_rgb_update = current_time;
+        }
     }
 }
