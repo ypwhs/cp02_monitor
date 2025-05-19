@@ -94,3 +94,38 @@ void RGB_Example(void)
         0);
     ESP_LOGI(TAG, "RGB example demo task created successfully");
 }
+
+// 添加RGB灯具体实现
+void RGB_Off(void) {
+    ESP_LOGI(TAG, "Turning RGB off");
+    led_strip_clear(led_strip);
+    led_strip_refresh(led_strip);
+}
+
+// RGB循环动画
+void RGB_Loop(int step_count) {
+    ESP_LOGI(TAG, "Running RGB loop animation for %d steps", step_count);
+    static uint8_t i = 0;
+    
+    for (int j = 0; j < step_count; j++) {
+        i = (i + 1) % 192;
+        Set_RGB(RGB_Data[i][0]*3, RGB_Data[i][1]*3, RGB_Data[i][2]*3);
+        vTaskDelay(20 / portTICK_PERIOD_MS);
+    }
+}
+
+// 定期更新RGB状态
+bool RGB_Update(void) {
+    static uint32_t last_update = 0;
+    uint32_t now = esp_log_timestamp();
+    
+    if (now - last_update < 50) {  // 每50ms更新一次
+        return false;
+    }
+    
+    last_update = now;
+    
+    // 这里可以添加定期更新的动画逻辑
+    // 返回true表示更新了状态
+    return true;
+}

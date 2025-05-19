@@ -8,6 +8,7 @@
 #include "lwip/dns.h"
 #include "lwip/ip4_addr.h"
 #include "dhcpserver/dhcpserver.h"
+#include "RGB/RGB.h"
 
 static const char *TAG = "CONFIG_MANAGER";
 
@@ -28,15 +29,15 @@ config_manager_t config_manager = {
 };
 
 // 默认监控URL
-static const char* DEFAULT_MONITOR_URL = "http://192.168.32.2/metrics";
+static char* DEFAULT_MONITOR_URL = "http://192.168.32.2/metrics";
 static const char* URL_PREFIX = "http://";
 static const char* URL_SUFFIX = "/metrics";
 
 // 存储URL和IP地址的缓冲区
-static char monitor_url_buffer[128] = {0};
-static char ssid_buffer[33] = {0};
-static char password_buffer[65] = {0};
-static char ip_buffer[32] = {0};
+static char monitor_url_buffer[256] = {0};
+static char ssid_buffer[65] = {0};
+static char password_buffer[129] = {0};
+static char ip_buffer[64] = {0};
 
 // AP IP地址
 static ip4_addr_t ap_ip;
@@ -66,6 +67,9 @@ static void generate_unique_ap_ssid(void) {
 // 初始化配置管理器
 void config_manager_init(void) {
     ESP_LOGI(TAG, "初始化配置管理器...");
+    
+    // 初始化RGB灯
+    RGB_Init();
     
     // 生成唯一的AP SSID
     generate_unique_ap_ssid();
@@ -251,7 +255,7 @@ void config_manager_start_portal(void) {
         config.send_wait_timeout = 10;
         config.uri_match_fn = httpd_uri_match_wildcard;
         // 增加请求处理buffer大小来处理更大的请求
-        config.stack_size = 8192;
+        config.stack_size = 16384;  // 增加栈大小
         config.server_port = 80;
         
         // 启动HTTP服务器
@@ -349,6 +353,15 @@ void config_manager_set_rgb_enabled(bool enabled) {
     nvs_set_u8(nvs_handle, config_manager.nvs_rgb_key, enabled ? 1 : 0);
     nvs_commit(nvs_handle);
     nvs_close(nvs_handle);
+    
+    // 立即应用RGB灯状态
+    if (enabled) {
+        ESP_LOGI(TAG, "RGB灯已启用");
+        RGB_Loop(1);
+    } else {
+        ESP_LOGI(TAG, "RGB灯已禁用");
+        RGB_Off();
+    }
 }
 
 // 重置配置
@@ -554,8 +567,12 @@ static esp_err_t handle_root_get(httpd_req_t *req) {
     
     ESP_LOGI(TAG, "当前URL: %s, 提取的IP: %s", current_url, current_ip);
     
-    // 使用标准C字符串而不是原始字符串字面量
-    const char* html_start = 
+    // 使用分块传输的方式发送HTML
+    httpd_resp_set_type(req, "text/html");
+    
+    // 以下使用分块发送大型HTML
+    // 第一部分 - 头部和样式
+    const char* html_part1 = 
     "<!DOCTYPE html>\n"
     "<html>\n"
     "<head>\n"
@@ -604,9 +621,14 @@ static esp_err_t handle_root_get(httpd_req_t *req) {
     "                小电拼服务器IP地址:<br>\n"
     "                <input type='text' name='monitor_url' value='";
     
-    const char* html_ip_part = current_ip ? current_ip : "192.168.32.2";
+    // 发送第一部分
+    httpd_resp_send_chunk(req, html_part1, strlen(html_part1));
     
-    const char* html_end = 
+    // 发送IP地址
+    httpd_resp_send_chunk(req, current_ip, strlen(current_ip));
+    
+    // 第二部分 - 表单结束和其他控件
+    const char* html_part2 = 
     "' placeholder='例如: 192.168.32.2'><br>\n"
     "                <button type='submit'>保存配置</button>\n"
     "            </form>\n"
@@ -625,7 +647,13 @@ static esp_err_t handle_root_get(httpd_req_t *req) {
     "            <h3>系统设置</h3>\n"
     "            <button class='danger-button' onclick='showResetConfirm()'>重置所有配置</button>\n"
     "        </div>\n"
-    "    </div>\n"
+    "    </div>\n";
+    
+    // 发送第二部分
+    httpd_resp_send_chunk(req, html_part2, strlen(html_part2));
+    
+    // 第三部分 - 模态窗口和脚本
+    const char* html_part3 = 
     "\n"
     "    <div id='resetModal' class='modal'>\n"
     "        <div class='modal-content'>\n"
@@ -719,16 +747,10 @@ static esp_err_t handle_root_get(httpd_req_t *req) {
     "</body>\n"
     "</html>";
     
-    // 计算HTML长度
-    size_t html_len = strlen(html_start) + strlen(html_ip_part) + strlen(html_end);
+    // 发送第三部分
+    httpd_resp_send_chunk(req, html_part3, strlen(html_part3));
     
-    // 设置响应头
-    httpd_resp_set_type(req, "text/html");
-    
-    // 发送HTML
-    httpd_resp_send_chunk(req, html_start, strlen(html_start));
-    httpd_resp_send_chunk(req, html_ip_part, strlen(html_ip_part));
-    httpd_resp_send_chunk(req, html_end, strlen(html_end));
+    // 发送结束标记
     httpd_resp_send_chunk(req, NULL, 0);
     
     return ESP_OK;
@@ -812,7 +834,7 @@ static esp_err_t handle_rgb_post(httpd_req_t *req) {
 static esp_err_t handle_save_post(httpd_req_t *req) {
     // 获取请求内容长度
     int total_len = req->content_len;
-    if (total_len <= 0 || total_len > 2048) { // 增加到2048允许更长的内容
+    if (total_len <= 0 || total_len > 4096) { // 增加到4096允许更长的内容
         ESP_LOGW(TAG, "请求内容长度无效: %d", total_len);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
         return ESP_FAIL;
@@ -840,9 +862,9 @@ static esp_err_t handle_save_post(httpd_req_t *req) {
     content[cur_len] = '\0';
     
     // 解析参数
-    char ssid[33] = {0};
-    char password[65] = {0};
-    char monitor_url[128] = {0};
+    char ssid[65] = {0};  // 增加SSID缓冲区大小
+    char password[129] = {0};  // 增加密码缓冲区大小
+    char monitor_url[256] = {0};  // 增加URL缓冲区大小
     bool need_restart = false;
     bool config_changed = false;
     

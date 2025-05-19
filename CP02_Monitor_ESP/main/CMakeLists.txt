@@ -7,6 +7,7 @@ idf_component_register(
                               "Wireless/Wireless.c"
                               "ConfigManager/ConfigManager.c"
                               "ConfigManager/Display_Manager.c"
+                              "RGB/RGB.c"
 
                          INCLUDE_DIRS 
                               "./LCD_Driver/Vernon_ST7789T" 
@@ -15,5 +16,6 @@ idf_component_register(
                               "./Power_Monitor"
                               "./Wireless"
                               "./ConfigManager"
+                              "./RGB"
                               "."
                        )
