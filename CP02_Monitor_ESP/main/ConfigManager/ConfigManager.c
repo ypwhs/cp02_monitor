@@ -255,7 +255,7 @@ void config_manager_start_portal(void) {
         config.send_wait_timeout = 10;
         config.uri_match_fn = httpd_uri_match_wildcard;
         // 增加请求处理buffer大小来处理更大的请求
-        config.stack_size = 32768;     // 增加栈大小
+        config.stack_size = 4096;     // 增加栈大小
         config.server_port = 80;
         
         // 启动HTTP服务器
