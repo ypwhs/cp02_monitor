@@ -198,8 +198,20 @@ void config_manager_init(void) {
         dns.ip.type = IPADDR_TYPE_V4;
         esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns);
         
+        // 增强DNS劫持 - 确保我们的IP是唯一的DNS服务器
+        ip_addr_t *dnsserver = dns_getserver(0);
+        if (dnsserver->u_addr.ip4.addr != ip_info.ip.addr) {
+            dns_setserver(0, (const ip_addr_t*)&dns.ip);
+        }
+        
+        // 设置备用DNS也指向我们自己
+        esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns);
+        dns_setserver(1, (const ip_addr_t*)&dns.ip);
+        
         // 启动DHCP服务器
         esp_netif_dhcps_start(netif);
+        
+        ESP_LOGI(TAG, "DNS劫持已设置，所有域名将解析到: "IPSTR, IP2STR(&ip_info.ip));
         
         display_manager_create_ap_screen(config_manager.ap_ssid, ip_addr);
     }
@@ -1064,61 +1076,83 @@ static esp_err_t handle_reset_post(httpd_req_t *req) {
 static esp_err_t handle_not_found(httpd_req_t *req, httpd_err_code_t err) {
     ESP_LOGI(TAG, "捕获门户：截获请求 %s", req->uri);
     
-    char host_buf[64];
+    char host_buf[64] = {0};
     if (httpd_req_get_hdr_value_str(req, "Host", host_buf, sizeof(host_buf)) == ESP_OK) {
         ESP_LOGI(TAG, "请求主机: %s", host_buf);
     }
     
-    // 检查是否是重定向请求
-    if (strstr(req->uri, "/generate_204") != NULL || 
-        strstr(req->uri, "/success") != NULL ||
-        strstr(req->uri, "/connecttest") != NULL ||
-        strstr(req->uri, "/redirect") != NULL ||
-        strstr(req->uri, "/hotspot-detect") != NULL ||
-        strstr(req->uri, "/ncsi.txt") != NULL) {
-        
-        // 获取AP IP地址
-        esp_netif_ip_info_t ip_info;
-        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
-        esp_netif_get_ip_info(netif, &ip_info);
-        
-        char redirect_url[64];
-        snprintf(redirect_url, sizeof(redirect_url), "http://"IPSTR"/", IP2STR(&ip_info.ip));
+    // 获取AP IP地址
+    esp_netif_ip_info_t ip_info;
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    esp_netif_get_ip_info(netif, &ip_info);
+    
+    char redirect_url[64];
+    snprintf(redirect_url, sizeof(redirect_url), "http://"IPSTR"/", IP2STR(&ip_info.ip));
+    
+    // 检查是否是重定向请求 - 扩展支持更多设备类型
+    if (strstr(req->uri, "/generate_204") != NULL ||           // Android
+        strstr(req->uri, "/gen_204") != NULL ||                // Android 其他变体
+        strstr(req->uri, "/mobile/status.php") != NULL ||      // 苹果设备
+        strstr(req->uri, "/success") != NULL ||                // Windows
+        strstr(req->uri, "/ncsi.txt") != NULL ||               // Windows
+        strstr(req->uri, "/connecttest.txt") != NULL ||        // Windows
+        strstr(req->uri, "/redirect") != NULL ||               // 通用
+        strstr(req->uri, "/hotspot-detect") != NULL ||         // Apple 设备
+        strstr(req->uri, "/library/test/success.html") != NULL || // Apple 设备
+        strstr(req->uri, "/kindle-wifi/wifistub.html") != NULL || // Kindle
+        strstr(req->uri, "/connectivity-check") != NULL ||     // Firefox OS
+        strstr(req->uri, "/fwlink/") != NULL) {                // Microsoft
         
         // 直接重定向到主页
         httpd_resp_set_status(req, "302 Found");
         httpd_resp_set_hdr(req, "Location", redirect_url);
+        httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
         httpd_resp_send(req, NULL, 0);
         return ESP_OK;
     }
     
-    // 构建捕获门户页面
-    const char* html = 
-    "<!DOCTYPE html>\n"
-    "<html>\n"
-    "<head>\n"
-    "    <meta charset='utf-8'>\n"
-    "    <title>需要登录</title>\n"
-    "    <meta name='viewport' content='width=device-width, initial-scale=1'>\n"
-    "    <style>\n"
-    "        body { font-family: Arial; margin: 20px; text-align: center; }\n"
-    "        .message { margin: 20px; padding: 20px; background: #e3f2fd; border-radius: 5px; }\n"
-    "        .btn { background: #2196F3; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }\n"
-    "    </style>\n"
-    "</head>\n"
-    "<body>\n"
-    "    <div class='message'>\n"
-    "        <h2>设备WiFi配置</h2>\n"
-    "        <p>当前设备需要配置WiFi连接信息</p>\n"
-    "        <p>请点击下方按钮进入配置页面</p>\n"
-    "        <a href='/'><button class='btn'>进入配置</button></a>\n"
-    "    </div>\n"
-    "</body>\n"
-    "</html>";
+    // 处理任何非静态资源的其他请求（用于捕获门户）
+    if (strcmp(req->uri, "/") != 0 && 
+        !strstr(req->uri, ".css") && 
+        !strstr(req->uri, ".js") && 
+        !strstr(req->uri, ".ico") && 
+        !strstr(req->uri, ".png")) {
+        
+        // 构建捕获门户页面
+        const char* html = 
+        "<!DOCTYPE html>\n"
+        "<html>\n"
+        "<head>\n"
+        "    <meta charset='utf-8'>\n"
+        "    <title>WiFi设置</title>\n"
+        "    <meta name='viewport' content='width=device-width, initial-scale=1'>\n"
+        "    <meta http-equiv='refresh' content='0;url=/'>\n" // 自动重定向到主页
+        "    <style>\n"
+        "        body { font-family: Arial; margin: 20px; text-align: center; }\n"
+        "        .message { margin: 20px; padding: 20px; background: #e3f2fd; border-radius: 5px; }\n"
+        "        .btn { background: #2196F3; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }\n"
+        "    </style>\n"
+        "</head>\n"
+        "<body>\n"
+        "    <div class='message'>\n"
+        "        <h2>设备WiFi配置</h2>\n"
+        "        <p>正在跳转到配置页面...</p>\n"
+        "        <a href='/'><button class='btn'>如未自动跳转，请点击这里</button></a>\n"
+        "    </div>\n"
+        "</body>\n"
+        "</html>";
+        
+        // 发送捕获门户页面
+        httpd_resp_set_type(req, "text/html");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+        httpd_resp_set_hdr(req, "Pragma", "no-cache");
+        httpd_resp_set_hdr(req, "Expires", "0");
+        httpd_resp_send(req, html, strlen(html));
+        return ESP_OK;
+    }
     
-    // 发送捕获门户页面
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, html, strlen(html));
+    // 否则返回404
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "文件未找到");
     return ESP_OK;
 }
 
