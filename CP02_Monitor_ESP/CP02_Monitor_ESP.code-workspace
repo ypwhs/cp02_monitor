@@ -1,0 +1,18 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../CP02_Monitor"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.tsx": "javascriptreact",
+			"esp_log.h": "c",
+			"lvgl_driver.h": "c",
+			"rgb.h": "c"
+		}
+	}
+}

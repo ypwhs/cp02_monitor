@@ -10,10 +10,18 @@
 #include "dhcpserver/dhcpserver.h"
 #include "RGB/RGB.h"
 
+// 声明mDNS相关函数，避免包含头文件
+extern esp_err_t mdns_init(void);
+extern esp_err_t mdns_hostname_set(const char* hostname);
+extern esp_err_t mdns_instance_name_set(const char* instance_name);
+extern esp_err_t mdns_service_add(const char* instance_name, const char* service_type, 
+                                 const char* proto, uint16_t port, void* txt, size_t num_items);
+
 static const char *TAG = "CONFIG_MANAGER";
 
 // URL解码函数
 static void urldecode(const char* src, char* dst, size_t dst_size);
+static void init_mdns(void); // 添加mDNS初始化函数声明
 
 // 定义全局配置管理器实例
 config_manager_t config_manager = {
@@ -62,6 +70,29 @@ static void generate_unique_ap_ssid(void) {
     } else {
         ESP_LOGE(TAG, "无法获取MAC地址，使用默认SSID");
     }
+}
+
+// 初始化mDNS服务
+static void init_mdns(void) {
+    ESP_LOGI(TAG, "初始化mDNS服务...");
+    
+    // 初始化mDNS服务
+    esp_err_t err = mdns_init();
+    if (err) {
+        ESP_LOGE(TAG, "mDNS初始化失败: %s", esp_err_to_name(err));
+        return;
+    }
+    
+    // 设置主机名为"cpmonitor"
+    mdns_hostname_set("cpmonitor");
+    
+    // 设置默认实例名称
+    mdns_instance_name_set("CP02监控器");
+    
+    // 添加HTTP服务 (传递NULL作为txt和0作为num_items)
+    mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+    
+    ESP_LOGI(TAG, "mDNS服务初始化完成，现在可以通过 cpmonitor.local 访问");
 }
 
 // 初始化配置管理器
@@ -143,6 +174,9 @@ void config_manager_init(void) {
         // 重新启动WiFi并连接
         ESP_ERROR_CHECK(esp_wifi_start());
         ESP_ERROR_CHECK(esp_wifi_connect());
+        
+        // 初始化mDNS服务，使其可以通过cpmonitor.local访问
+        init_mdns();
         
         ESP_LOGI(TAG, "已连接到WiFi: %s", ssid_buffer);
     } else {
@@ -233,6 +267,14 @@ void config_manager_handle(void) {
                 if (display_manager_is_wifi_error_screen_active()) {
                     display_manager_delete_wifi_error_screen();
                     display_manager_show_monitor_screen();
+                }
+                
+                // 当WiFi连接成功时，初始化或更新mDNS服务
+                static bool mdns_initialized = false;
+                if (!mdns_initialized) {
+                    init_mdns();
+                    mdns_initialized = true;
+                    ESP_LOGI(TAG, "mDNS服务已初始化，可通过 cpmonitor.local 访问");
                 }
             }
             last_wifi_status = current_wifi_status;
