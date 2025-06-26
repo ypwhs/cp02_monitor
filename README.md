@@ -4,6 +4,10 @@
 
 ![](resources/cp02_monitor.jpg)
 
+群友后续开发工作：https://github.com/Northwoodmy/ESP32C6_OpenPowerMonitor
+
+![1233f0b8f06e3f68cbc29e0570c9cb71](https://github.com/user-attachments/assets/de587772-2e57-4b6c-b482-10efbcfd7331)
+
 ## 准备工作
 
 首先你需要准备一块 ESP32-S3 带屏开发板：[https://www.waveshare.net/shop/ESP32-S3-LCD-1.47.htm](https://www.waveshare.net/shop/ESP32-S3-LCD-1.47.htm)
